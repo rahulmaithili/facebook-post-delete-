@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB AI Post Manager - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body class="theme-dark">
+  <div class="settings-container">
+    <!-- Header -->
+    <header class="settings-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path>
+          </svg>
+        </div>
+        <div>
+          <h2>FB AI Post Manager</h2>
+          <span class="sub-tag">Configuration &amp; Rule Engine</span>
+        </div>
+      </div>
+      <a href="../dashboard/dashboard.html" class="btn btn-secondary">
+        &larr; Return to Dashboard
+      </a>
+    </header>
+
+    <div class="settings-grid">
+      <!-- Section 1: AI Provider & Security -->
+      <section class="settings-card">
+        <div class="card-header">
+          <div class="icon-bubble ai">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+            </svg>
+          </div>
+          <div>
+            <h3>AI Provider &amp; API Configuration</h3>
+            <span class="card-desc">Configure Gemini API or a secure backend proxy</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Provider Type</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="aiProvider" value="gemini" checked>
+              <span>Google Gemini (Direct API)</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="aiProvider" value="custom">
+              <span>Secure Backend / Cloud Function Proxy (Production)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Direct Gemini API Option -->
+        <div id="geminiConfigGroup" class="provider-config-group">
+          <div class="form-group">
+            <label for="apiKeyInput">Gemini API Key</label>
+            <div class="input-with-button">
+              <input type="password" id="apiKeyInput" placeholder="AIzaSy...">
+              <button id="btnToggleKeyVis" class="btn-input-addon" type="button">Show</button>
+            </div>
+            <div class="security-notice">
+              <strong>Security Architecture Note:</strong> In production environments, exposing permanent API keys inside client-side extensions is vulnerable to extraction. For local/testing use, keys are saved locally in <code>chrome.storage.local</code>. For multi-seat production, use the Secure Backend Proxy option.
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="aiModelSelect">Gemini Model</label>
+            <select id="aiModelSelect">
+              <option value="gemini-3.6-flash" selected>Gemini 3.6 Flash (Recommended - Latest &amp; Fast)</option>
+              <option value="gemini-3.6-pro">Gemini 3.6 Pro (Complex Reasoning)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash (Legacy)</option>
+              <option value="custom">Custom Model Name...</option>
+            </select>
+            <div id="customModelGroup" style="display: none; margin-top: 6px;">
+              <input type="text" id="customModelInput" placeholder="e.g. gemini-3.6-flash">
+            </div>
+          </div>
+
+          <button id="btnTestApi" class="btn btn-secondary">Test Connection</button>
+          <span id="testApiStatus" class="status-msg"></span>
+        </div>
+
+        <!-- Custom Backend Proxy Option -->
+        <div id="customConfigGroup" class="provider-config-group" style="display: none;">
+          <div class="form-group">
+            <label for="backendUrlInput">Backend Endpoint URL</label>
+            <input type="url" id="backendUrlInput" placeholder="https://your-cloud-function.cloudfunctions.net/analyzePosts">
+            <span class="field-hint">Receives batch of posts, securely attaches Gemini key on server side, and returns JSON.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Scanning Controls -->
+      <section class="settings-card">
+        <div class="card-header">
+          <div class="icon-bubble scan">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+          <div>
+            <h3>Feed Scanner &amp; Pacing</h3>
+            <span class="card-desc">Control scan boundaries and browser pacing</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="scanLimitSelect">Maximum Posts to Scan</label>
+          <select id="scanLimitSelect">
+            <option value="100">100 Posts (Quick batch)</option>
+            <option value="250">250 Posts</option>
+            <option value="500" selected>500 Posts (Default)</option>
+            <option value="1000">1,000 Posts</option>
+            <option value="2500">2,500 Posts</option>
+            <option value="99999">Scan until feed ends (Warning: Large scan)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="scanDelayInput">Scroll Pacing Delay (milliseconds)</label>
+          <input type="number" id="scanDelayInput" min="1500" max="6000" step="100" value="2200">
+          <span class="field-hint">Natural scrolling interval between 1.5s and 4.0s to avoid aggressive automation.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="deleteDelayInput">Deletion Pacing Interval (milliseconds)</label>
+          <input type="number" id="deleteDelayInput" min="1500" max="8000" step="200" value="2500">
+          <span class="field-hint">Time between sequential post deletions to respect Facebook rate boundaries.</span>
+        </div>
+      </section>
+
+      <!-- Section 3: AI Auto-Select Rules -->
+      <section class="settings-card">
+        <div class="card-header">
+          <div class="icon-bubble rules">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </div>
+          <div>
+            <h3>AI Auto-Select Rules</h3>
+            <span class="card-desc">Define criteria for automated candidate selection</span>
+          </div>
+        </div>
+
+        <div class="rules-box">
+          <p class="rules-intro">When <strong>AI Auto-Select</strong> is triggered in the dashboard, posts matching these conditions are selected for review:</p>
+
+          <div class="rule-field">
+            <span>Quality Score &lt;</span>
+            <input type="number" id="ruleMinQuality" min="0" max="100" value="40">
+          </div>
+
+          <div class="rule-field">
+            <span>Engagement Score &lt;</span>
+            <input type="number" id="ruleMinEngagement" min="0" max="100" value="15">
+          </div>
+
+          <div class="rule-field">
+            <span>Spam Score &gt;</span>
+            <input type="number" id="ruleMaxSpam" min="0" max="100" value="75">
+          </div>
+
+          <div class="rule-field">
+            <span>Duplicate Score &gt;</span>
+            <input type="number" id="ruleMaxDuplicate" min="0" max="100" value="85">
+          </div>
+        </div>
+
+        <div class="safety-badge-row">
+          <div class="safety-indicator">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            <span><strong>Anti-Accident Guardrail:</strong> Bulk deletion confirmation modal is permanently enforced and cannot be bypassed.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Storage & Maintenance -->
+      <section class="settings-card">
+        <div class="card-header">
+          <div class="icon-bubble danger">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </div>
+          <div>
+            <h3>Storage &amp; Privacy</h3>
+            <span class="card-desc">Manage locally stored data and cached scans</span>
+          </div>
+        </div>
+
+        <p class="privacy-note">
+          This extension stores scan snapshots and user preferences strictly inside your browser's local sandbox (<code>chrome.storage.local</code>). No personal data or Facebook passwords are ever transmitted to third parties.
+        </p>
+
+        <div class="danger-zone">
+          <button id="btnClearAllStorage" class="btn btn-danger">
+            Clear All Stored Scans &amp; Activity Logs
+          </button>
+          <span class="field-hint">Wipes all cached posts and activity logs. Settings are preserved.</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- Bottom Actions -->
+    <footer class="settings-footer">
+      <button id="btnSaveSettings" class="btn btn-primary btn-lg">
+        Save Changes
+      </button>
+      <span id="saveStatusMsg" class="status-msg"></span>
+    </footer>
+  </div>
+
+  <script src="../storage/storage.js"></script>
+  <script src="../ai/analyzer.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

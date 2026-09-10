@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB AI Post Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="dark">
+  <div class="popup-container" id="popupContainer">
+    <!-- Window Drag Bar & Quick Docking (For moving/docking window away from screen center) -->
+    <div class="drag-bar" id="dragBar" title="Click and drag to move window anywhere">
+      <span class="drag-handle-icon" id="dragHandle">⠿ DRAG TO MOVE ⠿</span>
+      <div class="dock-actions">
+        <button id="btnDockLeft" class="dock-btn" title="Snap tool to Left side of screen">⬅️ Dock Left</button>
+        <button id="btnDockRight" class="dock-btn" title="Snap tool to Right side of screen">Dock Right ➡️</button>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="popup-header" id="popupHeader">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path>
+          </svg>
+        </div>
+        <div>
+          <h1>FB AI Post Manager</h1>
+          <span class="version-tag">Production • Manifest V3</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnPopoutWindow" class="icon-btn" title="Pin to Side / Open Dedicated Tool Window (Won't close on refresh)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+            <path d="M14 9l3 3-3 3"></path>
+          </svg>
+        </button>
+        <button id="btnMinimize" class="icon-btn" title="Minimize / Compact View">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+        <button id="btnOptions" class="icon-btn" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <button id="btnClosePopup" class="icon-btn close-btn" title="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Collapsible Body Content -->
+    <div id="popupBodyContent" class="popup-body-content">
+      <!-- Context Card -->
+      <div class="context-card" id="contextCard">
+        <div class="status-indicator">
+          <span class="status-dot pulse" id="statusDot"></span>
+          <span class="status-text" id="statusText">Detecting Facebook...</span>
+        </div>
+        <div class="context-title" id="contextTitle">Checking active tab...</div>
+        <div class="context-badge-row">
+          <span class="badge" id="typeBadge">--</span>
+          <span class="badge admin-badge" id="adminBadge">Permissions Ready</span>
+        </div>
+      </div>
+
+      <!-- Quick Stats -->
+      <div class="stats-grid">
+        <div class="stat-box">
+          <span class="stat-number" id="statScanned">0</span>
+          <span class="stat-label">Scanned</span>
+        </div>
+        <div class="stat-box danger">
+          <span class="stat-number" id="statDelete">0</span>
+          <span class="stat-label">AI Delete</span>
+        </div>
+        <div class="stat-box warning">
+          <span class="stat-number" id="statReview">0</span>
+          <span class="stat-label">Review</span>
+        </div>
+      </div>
+
+      <!-- Primary Action Buttons -->
+      <div class="action-buttons">
+        <div class="scan-btn-group">
+          <button id="btnInstantScan" class="btn btn-primary btn-half" title="Directly grab all posts currently on screen (Ultra Fast, 0 wait)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span id="instantScanBtnText">⚡ Direct Scan</span>
+          </button>
+          <button id="btnQuickScan" class="btn btn-secondary btn-half" title="Fast scroll to load and scan more posts">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <span id="scanBtnText">📜 Deep Scan</span>
+          </button>
+        </div>
+
+        <div class="secondary-btn-group">
+          <button id="btnResetScan" class="btn btn-secondary btn-half" title="Reset and clear all scanned posts">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+            </svg>
+            <span>Reset Scan</span>
+          </button>
+          <button id="btnOpenDashboard" class="btn btn-secondary btn-half" title="Open Full Screen Dashboard">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
+            <span>Dashboard</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- In-Popup Scanning Progress Section -->
+      <div class="popup-progress-section" id="popupProgressSection" style="display: none;">
+        <div class="popup-progress-header">
+          <span id="popupProgressText">Scanning feed...</span>
+          <span id="popupProgressCount">0 posts</span>
+        </div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="popupProgressFill" style="width: 0%;"></div>
+        </div>
+        <div class="scan-controls-inline">
+          <button id="btnStopQuickScan" class="btn btn-xs btn-danger">Stop Scan</button>
+        </div>
+      </div>
+
+      <!-- In-Popup Results Section (Shows directly in popup!) -->
+      <div class="popup-results-section" id="popupResultsSection" style="display: none;">
+        <div class="results-header-bar">
+          <div class="results-title">
+            <label class="select-all-label">
+              <input type="checkbox" id="cbSelectAllPopup" title="Select / Deselect All">
+              <strong>All</strong>
+            </label>
+            <span class="badge" id="resultsCountBadge">0</span>
+          </div>
+          <div class="results-quick-actions">
+            <button id="btnPopupAnalyzeAi" class="btn-xs btn-ai" title="Analyze with Gemini AI">
+              Analyze AI
+            </button>
+            <button id="btnPopupDelete" class="btn-xs btn-danger" disabled title="Delete selected posts">
+              🗑️ Delete (<span id="popupSelCount">0</span>)
+            </button>
+          </div>
+        </div>
+
+        <!-- Scrollable Results Post List -->
+        <div class="popup-posts-list" id="popupPostsList">
+          <!-- Populated dynamically by popup.js -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="popup-footer">
+      <span>AI-Powered • Safety-Enforced Moderation</span>
+    </footer>
+  </div>
+
+  <script src="../utils/helpers.js"></script>
+  <script src="../utils/similarity.js"></script>
+  <script src="../storage/storage.js"></script>
+  <script src="../ai/prompts.js"></script>
+  <script src="../ai/schema.js"></script>
+  <script src="../ai/analyzer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

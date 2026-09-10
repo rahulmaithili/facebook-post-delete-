@@ -1,0 +1,27 @@
+# Node / Dependencies
+node_modules/
+package-lock.json
+
+# Environment & API keys
+.env
+.env.local
+*.key
+*.pem
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*

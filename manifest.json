@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "FB AI Post Manager",
+  "version": "1.0.0",
+  "description": "Production-ready Chrome Extension for Facebook Group and Page administrators to scan, analyze with AI, filter, and safely bulk-manage posts.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "*://*.facebook.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "FB AI Post Manager",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.facebook.com/*"
+      ],
+      "js": [
+        "content/dom-utils.js",
+        "content/facebook-detector.js",
+        "content/facebook-scanner.js",
+        "content/facebook-actions.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/*",
+        "dashboard/*"
+      ],
+      "matches": [
+        "*://*.facebook.com/*"
+      ]
+    }
+  ]
+}

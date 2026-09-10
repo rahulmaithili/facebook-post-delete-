@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB AI Post Manager - Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body class="theme-dark">
+  <div class="app-layout">
+    <!-- Top Navigation Header -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="logo">
+          <div class="logo-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path>
+            </svg>
+          </div>
+          <div class="logo-text">
+            <h2>FB AI Post Manager</h2>
+            <span class="sub-tag">Group &amp; Page Content Studio</span>
+          </div>
+        </div>
+
+        <div class="fb-status-pill" id="fbStatusPill">
+          <span class="status-dot pulse" id="navStatusDot"></span>
+          <span id="navStatusText">Connecting...</span>
+          <span class="context-tag" id="navContextTag">--</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <!-- Minimize / Return to Facebook Button -->
+        <button id="btnMinimizeDashboard" class="nav-icon-btn" title="Minimize / Return to Facebook">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+
+        <!-- Dark / Light Theme Toggle -->
+        <button id="themeToggleBtn" class="nav-icon-btn" title="Toggle Theme">
+          <svg id="themeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+
+        <!-- Settings Button -->
+        <button id="btnOpenSettings" class="nav-icon-btn" title="Settings &amp; Rules">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-container">
+
+      <!-- Action Toolbar -->
+      <section class="toolbar-section">
+        <div class="toolbar-left">
+          <button id="btnInstantScan" class="btn btn-primary" title="Instantly scan all posts currently loaded in DOM">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span>Direct Fast Scan</span>
+          </button>
+
+          <button id="btnScan" class="btn btn-secondary" title="Deep scroll scanning for older timeline posts">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <span>Deep Scan</span>
+          </button>
+
+          <button id="btnStopScan" class="btn btn-secondary" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="6" width="12" height="12"></rect>
+            </svg>
+            <span>Stop Scan</span>
+          </button>
+
+          <button id="btnResetScan" class="btn btn-secondary" title="Clear and reset all scanned posts">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+            </svg>
+            <span>Reset Scan</span>
+          </button>
+
+          <button id="btnAnalyzeAi" class="btn btn-ai">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+            </svg>
+            <span>Analyze with AI</span>
+          </button>
+        </div>
+
+        <div class="toolbar-right">
+          <button id="btnSelectAll" class="btn btn-secondary">
+            <span>Select All</span>
+          </button>
+          <button id="btnDeselectAll" class="btn btn-secondary">
+            <span>Deselect All</span>
+          </button>
+          <button id="btnExport" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Export Report</span>
+          </button>
+          <button id="btnDeleteSelected" class="btn btn-danger" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Delete Selected (<span id="deleteCountBadge">0</span>)</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Statistics Cards Grid -->
+      <section class="stats-section">
+        <div class="stat-card">
+          <span class="stat-title">TOTAL SCANNED</span>
+          <span class="stat-value" id="cardTotalScanned">0</span>
+          <span class="stat-sub">Group / Page posts</span>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-title">AI ANALYZED</span>
+          <span class="stat-value" id="cardAiAnalyzed">0</span>
+          <span class="stat-sub" id="cardAiAnalyzedPercent">0% coverage</span>
+        </div>
+
+        <div class="stat-card active-selection">
+          <span class="stat-title">SELECTED</span>
+          <span class="stat-value" id="cardSelected">0</span>
+          <span class="stat-sub">Ready for action</span>
+        </div>
+
+        <div class="stat-card card-keep">
+          <span class="stat-title">KEEP</span>
+          <span class="stat-value" id="cardKeep">0</span>
+          <span class="stat-sub">High value &amp; organic</span>
+        </div>
+
+        <div class="stat-card card-delete">
+          <span class="stat-title">DELETE</span>
+          <span class="stat-value" id="cardDelete">0</span>
+          <span class="stat-sub">Spam / Low quality</span>
+        </div>
+
+        <div class="stat-card card-review">
+          <span class="stat-title">REVIEW</span>
+          <span class="stat-value" id="cardReview">0</span>
+          <span class="stat-sub">Borderline / Check</span>
+        </div>
+
+        <div class="stat-card">
+          <span class="stat-title">DELETED</span>
+          <span class="stat-value" id="cardDeleted">0</span>
+          <span class="stat-sub">Successfully removed</span>
+        </div>
+
+        <div class="stat-card card-error">
+          <span class="stat-title">ERRORS / SKIPPED</span>
+          <span class="stat-value" id="cardErrors">0</span>
+          <span class="stat-sub">Protected or failed</span>
+        </div>
+      </section>
+
+      <!-- Real-Time Progress Bar Section -->
+      <section class="progress-section" id="progressSection" style="display: none;">
+        <div class="progress-header">
+          <span class="progress-label" id="progressBarLabel">Progress</span>
+          <span class="progress-count" id="progressBarCount">0 / 0</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressBarFill" style="width: 0%;"></div>
+        </div>
+        <div class="progress-sub" id="progressBarSub">Operation in progress...</div>
+      </section>
+
+      <!-- Smart Filter & Rules Control Toolbar -->
+      <section class="filter-section">
+        <div class="filter-row top-filters">
+          <!-- Recommendation Pills -->
+          <div class="filter-group">
+            <label class="filter-label">Recommendation:</label>
+            <div class="pill-group" id="recFilterGroup">
+              <button class="pill active" data-rec="ALL">ALL</button>
+              <button class="pill pill-keep" data-rec="KEEP">KEEP</button>
+              <button class="pill pill-review" data-rec="REVIEW">REVIEW</button>
+              <button class="pill pill-delete" data-rec="DELETE">DELETE</button>
+            </div>
+          </div>
+
+          <!-- Content Type Pills -->
+          <div class="filter-group">
+            <label class="filter-label">Content Type:</label>
+            <div class="pill-group" id="typeFilterGroup">
+              <button class="pill active" data-type="ALL">ALL</button>
+              <button class="pill" data-type="TEXT">TEXT</button>
+              <button class="pill" data-type="IMAGE">IMAGE</button>
+              <button class="pill" data-type="VIDEO">VIDEO</button>
+              <button class="pill" data-type="LINK">LINK</button>
+              <button class="pill" data-type="REEL">REEL</button>
+            </div>
+          </div>
+
+          <!-- Search Box -->
+          <div class="search-box">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="searchInput" placeholder="Search content or author...">
+          </div>
+        </div>
+
+        <div class="filter-row sliders-and-rules">
+          <!-- Quality Slider -->
+          <div class="slider-group">
+            <div class="slider-header">
+              <label>Quality Score (Max):</label>
+              <span class="slider-val" id="qualityVal">100</span>
+            </div>
+            <input type="range" id="qualitySlider" min="0" max="100" value="100">
+          </div>
+
+          <!-- Engagement Slider -->
+          <div class="slider-group">
+            <div class="slider-header">
+              <label>Engagement Score (Max):</label>
+              <span class="slider-val" id="engagementVal">100</span>
+            </div>
+            <input type="range" id="engagementSlider" min="0" max="100" value="100">
+          </div>
+
+          <!-- Date Dropdown -->
+          <div class="dropdown-group">
+            <label>Date Filter:</label>
+            <select id="dateFilterSelect">
+              <option value="ALL">All time</option>
+              <option value="7D">Last 7 days</option>
+              <option value="30D">Last 30 days</option>
+              <option value="90D">Last 3 months</option>
+              <option value="1Y">Last year</option>
+            </select>
+          </div>
+
+          <!-- AI Confidence -->
+          <div class="dropdown-group">
+            <label>AI Confidence:</label>
+            <select id="confidenceSelect">
+              <option value="ALL">All Confidence</option>
+              <option value="HIGH">High (&gt;85%)</option>
+              <option value="MED">Medium (&gt;70%)</option>
+              <option value="LOW">Low (&lt;70%)</option>
+            </select>
+          </div>
+
+          <!-- AI Auto-Select Rule Toggle -->
+          <div class="auto-select-toggle-box">
+            <div class="toggle-text">
+              <span class="toggle-title">AI Auto-Select Rules</span>
+              <span class="toggle-desc">Select matches automatically</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autoSelectToggle">
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Quick Filter Chips -->
+        <div class="filter-row chips-row">
+          <span class="chips-label">Quick Filters:</span>
+          <button class="chip" id="chipDuplicates">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            Show likely duplicates
+          </button>
+
+          <button class="chip" id="chipLowEngagement">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline>
+              <polyline points="17 18 23 18 23 12"></polyline>
+            </svg>
+            Show low engagement
+          </button>
+
+          <button class="chip" id="chipSpam">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            Show spam-like
+          </button>
+
+          <button class="chip" id="chipOutdated">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 14 14"></polyline>
+            </svg>
+            Show outdated
+          </button>
+
+          <button class="chip chip-clear" id="chipResetFilters">
+            Reset Filters
+          </button>
+
+          <div class="matching-count">
+            <span id="filteredCount">0</span> posts match filters
+          </div>
+        </div>
+      </section>
+
+      <!-- Post Management Table Section -->
+      <section class="table-section">
+        <div class="table-wrapper">
+          <table class="post-table">
+            <thead>
+              <tr>
+                <th class="col-check">
+                  <input type="checkbox" id="thSelectAll">
+                </th>
+                <th class="col-preview">Preview</th>
+                <th class="col-type">Type</th>
+                <th class="col-author">Author</th>
+                <th class="col-date">Date</th>
+                <th class="col-content">Content</th>
+                <th class="col-engagement">Engagement</th>
+                <th class="col-scores">Scores (Q / E / S / D)</th>
+                <th class="col-rec">Recommendation</th>
+                <th class="col-conf">Conf</th>
+                <th class="col-action">Action</th>
+              </tr>
+            </thead>
+            <tbody id="postTableBody">
+              <!-- Rendered via dashboard.js -->
+            </tbody>
+          </table>
+
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+            </div>
+            <h3>No Facebook posts loaded yet</h3>
+            <p>Click <strong>SCAN POSTS</strong> to begin loading posts from your active Facebook Group or Page feed.</p>
+            <div class="empty-actions">
+              <button id="btnEmptyScan" class="btn btn-primary">Scan Active Facebook</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Collapsible Activity Log Drawer -->
+      <section class="log-drawer collapsed" id="logDrawer">
+        <div class="log-header" id="logHeader">
+          <div class="log-title">
+            <span class="log-indicator"></span>
+            <strong>Activity Log</strong>
+            <span class="log-count" id="logCountBadge">0 entries</span>
+          </div>
+          <div class="log-controls">
+            <button id="btnClearLogs" class="btn-xs">Clear</button>
+            <button id="btnExportLogs" class="btn-xs">Export Log</button>
+            <button id="btnToggleLog" class="btn-xs">Expand</button>
+          </div>
+        </div>
+        <div class="log-body" id="logBody">
+          <!-- Log lines stream here -->
+        </div>
+      </section>
+    </main>
+
+    <!-- SAFE BULK DELETE CONFIRMATION MODAL -->
+    <div class="modal-overlay" id="confirmDeleteModal" style="display: none;">
+      <div class="modal-card modal-danger">
+        <div class="modal-header">
+          <div class="modal-icon danger">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+          </div>
+          <div>
+            <h3>Confirm Bulk Deletion</h3>
+            <span class="modal-sub">Anti-Accident Safeguard Verification</span>
+          </div>
+        </div>
+
+        <div class="modal-body">
+          <div class="alert-box alert-danger">
+            <strong>WARNING:</strong> You are about to permanently delete 
+            <span class="bold-count" id="modalDeleteCount">0</span> selected posts from Facebook.
+            <br>
+            This action modifies live content and may not be reversible.
+          </div>
+
+          <div class="delete-summary-box">
+            <div class="summary-item">
+              <span>Group / Page:</span>
+              <strong id="modalContextName">Active Context</strong>
+            </div>
+            <div class="summary-item">
+              <span>AI DELETE Recommendations:</span>
+              <strong id="modalAiDeleteCount" class="text-danger">0</strong>
+            </div>
+            <div class="summary-item">
+              <span>REVIEW / Manual Selections:</span>
+              <strong id="modalManualSelectCount">0</strong>
+            </div>
+          </div>
+
+          <p class="modal-instruction">
+            Posts will be deleted sequentially with safety intervals. Automation will halt immediately if Facebook displays CAPTCHA or permission dialogs.
+          </p>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btnCancelDelete" class="btn btn-secondary">Cancel &amp; Review Again</button>
+          <button id="btnConfirmDeleteExecution" class="btn btn-danger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            CONFIRM BULK DELETE
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DELETION IN-PROGRESS MODAL -->
+    <div class="modal-overlay" id="deletionProgressModal" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-icon pulse">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 14 14"></polyline>
+            </svg>
+          </div>
+          <div>
+            <h3 id="delProgressTitle">Deleting Selected Posts...</h3>
+            <span class="modal-sub" id="delProgressSub">Sequential verified execution</span>
+          </div>
+        </div>
+
+        <div class="modal-body">
+          <div class="progress-track mb-3">
+            <div class="progress-fill danger-fill" id="delModalProgressFill" style="width: 0%;"></div>
+          </div>
+
+          <div class="del-stats-grid">
+            <div class="del-stat">
+              <span class="del-stat-num" id="delStatCurrent">0 / 0</span>
+              <span class="del-stat-label">Progress</span>
+            </div>
+            <div class="del-stat">
+              <span class="del-stat-num text-success" id="delStatSuccess">0</span>
+              <span class="del-stat-label">Successful</span>
+            </div>
+            <div class="del-stat">
+              <span class="del-stat-num text-danger" id="delStatFailed">0</span>
+              <span class="del-stat-label">Failed</span>
+            </div>
+            <div class="del-stat">
+              <span class="del-stat-num text-warning" id="delStatSkipped">0</span>
+              <span class="del-stat-label">Skipped</span>
+            </div>
+          </div>
+
+          <div class="del-current-info" id="delCurrentInfo">
+            Preparing sequence...
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btnStopDeletion" class="btn btn-secondary">Stop Deletion</button>
+          <button id="btnDismissDeletion" class="btn btn-primary" style="display: none;">Close &amp; View Results</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- POST DETAIL MODAL -->
+    <div class="modal-overlay" id="postDetailModal" style="display: none;">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <div>
+            <h3 id="detailAuthor">Post Details</h3>
+            <span class="modal-sub" id="detailDate">Timestamp</span>
+          </div>
+          <button id="btnCloseDetail" class="nav-icon-btn">&times;</button>
+        </div>
+
+        <div class="modal-body" id="detailModalBody">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="modal-footer">
+          <a id="btnDetailOpenFb" href="#" target="_blank" class="btn btn-secondary">Open on Facebook</a>
+          <button id="btnDetailClose" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXPORT MODAL -->
+    <div class="modal-overlay" id="exportModal" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Export Scan &amp; Moderation Report</h3>
+          <button id="btnCloseExport" class="nav-icon-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Export all scanned posts, AI recommendations, quality scores, and duplicate status.</p>
+          <div class="export-options">
+            <button id="btnExportCsv" class="btn btn-primary btn-block mb-2">Download CSV (.csv)</button>
+            <button id="btnExportJson" class="btn btn-secondary btn-block">Download Full JSON (.json)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dependencies -->
+  <script src="../utils/helpers.js"></script>
+  <script src="../utils/similarity.js"></script>
+  <script src="../utils/demo-data.js"></script>
+  <script src="../utils/logger.js"></script>
+  <script src="../storage/storage.js"></script>
+  <script src="../ai/prompts.js"></script>
+  <script src="../ai/schema.js"></script>
+  <script src="../ai/analyzer.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
