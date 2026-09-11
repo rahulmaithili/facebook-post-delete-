@@ -59,6 +59,15 @@ class FBLogger {
   warn(category, message, details) { return this.log('WARN', category, message, details); }
   error(category, message, details) { return this.log('ERROR', category, message, details); }
 
+  static info(category, message, details) { return (FBLogger.instance || window.fbLoggerInstance || this).log ? (FBLogger.instance || window.fbLoggerInstance).log('INFO', category, message, details) : null; }
+  static success(category, message, details) { return (FBLogger.instance || window.fbLoggerInstance || this).log ? (FBLogger.instance || window.fbLoggerInstance).log('SUCCESS', category, message, details) : null; }
+  static warn(category, message, details) { return (FBLogger.instance || window.fbLoggerInstance || this).log ? (FBLogger.instance || window.fbLoggerInstance).log('WARN', category, message, details) : null; }
+  static error(category, message, details) { return (FBLogger.instance || window.fbLoggerInstance || this).log ? (FBLogger.instance || window.fbLoggerInstance).log('ERROR', category, message, details) : null; }
+  static clear() { if (FBLogger.instance) FBLogger.instance.clear(); }
+  static exportAsText() { return FBLogger.instance ? FBLogger.instance.exportAsText() : ''; }
+  static getLogs() { return FBLogger.instance ? FBLogger.instance.logs : []; }
+  static addListener(cb) { return FBLogger.instance ? FBLogger.instance.addListener(cb) : () => {}; }
+
   addListener(callback) {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
@@ -73,10 +82,8 @@ class FBLogger {
   async saveToStorage() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       try {
-        await chrome.storage.local.set({ [this.storageKey]: this.logs.slice(0, 300) });
-      } catch (err) {
-        // Ignore quota limits
-      }
+        await chrome.storage.local.set({ [this.storageKey]: this.logs.slice(0, 200) });
+      } catch (err) {}
     }
   }
 
@@ -101,8 +108,12 @@ class FBLogger {
   }
 }
 
+var defaultLoggerInstance = new FBLogger();
+FBLogger.instance = defaultLoggerInstance;
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = FBLogger;
 } else {
-  window.FBLogger = new FBLogger();
+  window.FBLogger = FBLogger;
+  window.fbLoggerInstance = defaultLoggerInstance;
 }

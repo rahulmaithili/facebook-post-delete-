@@ -4,7 +4,7 @@
  * extracts title/ID, and checks for admin/management privileges.
  */
 
-const FBDetector = {
+var FBDetector = window.FBDetector || {
   detectContext() {
     const url = window.location.href;
     const hostname = window.location.hostname;

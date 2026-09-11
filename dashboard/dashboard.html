@@ -66,6 +66,31 @@
     <!-- Main Content Area -->
     <main class="main-container">
 
+      <!-- Facebook Group Target & Selector Trainer Bar -->
+      <section class="group-target-section">
+        <div class="group-target-left">
+          <span class="group-badge-label">👥 TARGET GROUP:</span>
+          <div class="group-input-box">
+            <input type="text" id="dashGroupInput" placeholder="Enter Facebook Group ID or URL (e.g. 1840651402763977)" autocomplete="off">
+            <button id="btnDashOpenGroup" class="btn btn-primary btn-sm" title="Navigate to Group & Target">
+              <span>🚀 Open Group</span>
+            </button>
+          </div>
+          <div class="dash-recent-chips" id="dashRecentChips"></div>
+        </div>
+        <div class="group-target-right">
+          <div class="trainer-badges">
+            <span class="dash-pill" id="dashPillFeed">Feed: --</span>
+            <span class="dash-pill" id="dashPillPosts">Posts: 0</span>
+            <span class="dash-pill" id="dashPillMenu">Menu: --</span>
+            <span class="dash-pill" id="dashPillRemoval">Action: --</span>
+          </div>
+          <button id="btnDashTrain" class="btn btn-trainer btn-sm" title="Live test DOM paths & adapt selectors for this Facebook Group">
+            <span>⚡ Train Selectors</span>
+          </button>
+        </div>
+      </section>
+
       <!-- Action Toolbar -->
       <section class="toolbar-section">
         <div class="toolbar-left">

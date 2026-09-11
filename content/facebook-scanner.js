@@ -3,7 +3,8 @@
  * Controlled, human-paced scrolling and resilient DOM extraction for Groups & Pages.
  */
 
-class FBScanner {
+if (typeof window.FBScannerClass === 'undefined') {
+  window.FBScannerClass = class FBScanner {
   constructor() {
     this.isScanning = false;
     this.isPaused = false;
@@ -80,12 +81,7 @@ class FBScanner {
       // Check if new posts were discovered
       if (newCount === prevCount) {
         this.consecutiveEmptyScrolls++;
-        if (this.consecutiveEmptyScrolls >= this.maxEmptyScrolls) {
-          this.emitProgress('SCAN_COMPLETED', {
-            count: newCount,
-            reason: 'Feed reached end or no more posts available',
-            posts: Array.from(this.scannedPosts.values())
-          });
+        if (this.consecutiveEmptyScrolls >= 8) {
           break;
         }
       } else {
@@ -94,12 +90,18 @@ class FBScanner {
     }
 
     this.isScanning = false;
+    this.emitProgress('SCAN_COMPLETED', {
+      count: this.scannedPosts.size,
+      reason: 'Scan completed',
+      posts: Array.from(this.scannedPosts.values())
+    });
   }
 
   /**
    * Direct instant scan without any page scrolling
    */
   instantScan() {
+    this.scannedPosts.clear();
     this.extractVisiblePosts();
     const posts = Array.from(this.scannedPosts.values());
     this.emitProgress('SCAN_COMPLETED', {
@@ -132,32 +134,56 @@ class FBScanner {
    * Fast scroll increment
    */
   async scrollStep() {
-    const scrollAmount = Math.floor(window.innerHeight * 0.9);
-    window.scrollBy({
-      top: scrollAmount,
-      behavior: 'smooth'
-    });
+    const scrollAmount = Math.floor(window.innerHeight * 0.85);
 
-    // Rapid delay (e.g. 400ms - 600ms)
+    // 1. Scroll window and document
+    window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+    if (document.documentElement) document.documentElement.scrollTop += scrollAmount;
+    if (document.body) document.body.scrollTop += scrollAmount;
+
+    // 2. Scroll any scrollable feed containers
+    const feedScrollables = document.querySelectorAll('[role="feed"], [role="main"], div[data-pagelet*="GroupFeed"], #pagelet_group_mall');
+    for (const el of feedScrollables) {
+      if (el.scrollHeight > el.clientHeight) {
+        el.scrollTop += scrollAmount;
+      }
+    }
+
     const jitter = Math.floor(Math.random() * 150);
-    await new Promise(r => setTimeout(r, this.scanDelay + jitter));
+    await new Promise(r => setTimeout(r, Math.max(600, this.scanDelay) + jitter));
   }
 
   /**
    * Scan DOM for visible posts and extract metadata
    */
   extractVisiblePosts() {
-    // Look inside feed first
-    const feed = document.querySelector('[role="feed"]') || document;
-    let postElements = Array.from(feed.querySelectorAll('div[role="article"], div[data-pagelet*="FeedUnit"]'));
+    const candidateNodes = new Set();
 
-    if (postElements.length === 0) {
-      postElements = FBDOM.findAll(FBDOM.selectors.postArticles);
+    // 1. Look inside feed container children
+    const feed = document.querySelector('[role="feed"], div[data-pagelet*="GroupFeed"], div[data-pagelet*="Feed"], div[role="main"]');
+    if (feed) {
+      const feedChildren = feed.children;
+      for (let i = 0; i < feedChildren.length; i++) {
+        const child = feedChildren[i];
+        if (child && child.offsetHeight > 70 && child.offsetWidth > 150) {
+          const innerArticle = child.querySelector('div[role="article"]');
+          candidateNodes.add(innerArticle || child);
+        }
+      }
     }
 
-    for (const postEl of postElements) {
+    // 2. All role="article" elements
+    const articles = document.querySelectorAll('div[role="article"], div[data-pagelet^="FeedUnit"], div[data-ad-preview="message"]');
+    articles.forEach(el => candidateNodes.add(el));
+
+    // 3. Fallback from FBDOM
+    if (candidateNodes.size === 0) {
+      const fbDomEls = FBDOM.findAll(FBDOM.selectors.postArticles);
+      fbDomEls.forEach(el => candidateNodes.add(el));
+    }
+
+    for (const postEl of candidateNodes) {
       try {
-        // Skip sidebar navigation, menus, or non-feed elements
         if (postEl.closest('[role="navigation"]') || postEl.closest('[aria-label="Manage Page"]') || postEl.closest('[role="banner"]')) {
           continue;
         }
@@ -166,9 +192,7 @@ class FBScanner {
         if (postData && postData.id && !this.scannedPosts.has(postData.id)) {
           this.scannedPosts.set(postData.id, postData);
         }
-      } catch (err) {
-        // Continue scanning other posts
-      }
+      } catch (err) {}
     }
   }
 
@@ -176,19 +200,87 @@ class FBScanner {
    * Extract metadata from a single post DOM node
    */
   parsePostElement(postEl) {
+    if (!postEl) return null;
+
     // Skip if it's too small to be a post (e.g. icon or badge)
     if (postEl.offsetHeight < 60 && postEl.offsetWidth < 150) {
       return null;
     }
 
+    // Skip composer ("Write something..."), announcement banners, navigation
+    if (
+      postEl.querySelector('[data-pagelet="GroupInlineComposer"]') ||
+      postEl.getAttribute('data-pagelet') === 'GroupInlineComposer' ||
+      postEl.closest('[role="navigation"]') ||
+      postEl.closest('[role="banner"]')
+    ) {
+      return null;
+    }
+
+    // 0. Locate Action Menu Trigger ("...") with resilient multi-tier fallback
+    let actionMenuBtn = FBDOM.findFirst(FBDOM.selectors.actionMenuTriggers, postEl);
+    if (!actionMenuBtn) {
+      const btns = postEl.querySelectorAll('div[role="button"], button, [role="button"]');
+      for (const btn of btns) {
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        const hasPopup = btn.getAttribute('aria-haspopup') === 'menu' || btn.getAttribute('aria-haspopup') === 'true';
+        if (hasPopup || aria.includes('action') || aria.includes('more') || aria.includes('option') || aria.includes('कार्रवाई') || aria.includes('अधिक') || aria.includes('विकल्प')) {
+          actionMenuBtn = btn;
+          break;
+        }
+      }
+    }
+
+    const actionMenuAria = actionMenuBtn ? (actionMenuBtn.getAttribute('aria-label') || '') : '';
+
     // 1. Permalink and ID
-    const timeLinkEl = FBDOM.findFirst(FBDOM.selectors.postTimeLinks, postEl);
+    let timeLinkEl = FBDOM.findFirst(FBDOM.selectors.postTimeLinks, postEl);
+    if (!timeLinkEl) {
+      const anchors = Array.from(postEl.querySelectorAll('a[role="link"], a[href], span[dir="auto"]'));
+      const timeRegex = /\b(\d+\s*(?:s|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?|w|weeks?|y|yrs|years?)|just now|yesterday|\d+\s*(?:दिन|घंटे|मिनट)\s*पहले)\b/i;
+      for (const a of anchors) {
+        if (a.closest('h2, h3, h4')) continue;
+        if (timeRegex.test(a.textContent || '') || timeRegex.test(a.getAttribute('aria-label') || '')) {
+          timeLinkEl = a;
+          break;
+        }
+      }
+    }
+
+    // Safety: Post must have at least author, content, or action menu/interactions
+    const hasAuthorSignal = postEl.querySelector('h2, h3, h4, a[href*="/user/"], a[href*="/profile"], strong a');
+    const hasContentSignal = postEl.querySelector('div[dir="auto"], img, video, a[href*="youtube.com"], a[href*="youtu.be"], [data-ad-preview="message"]');
+    const hasInteractionSignal = postEl.querySelector('[role="toolbar"], div[aria-label*="Like" i], div[aria-label*="Comment" i], div[aria-label*="Share" i], div[aria-label*="पसंद" i]');
+
+    if (!hasAuthorSignal && !hasContentSignal && !actionMenuBtn && !hasInteractionSignal) {
+      return null;
+    }
+
     const rawUrl = timeLinkEl ? (timeLinkEl.href || timeLinkEl.getAttribute('href') || '') : '';
     const cleanUrl = (typeof Helpers !== 'undefined')
       ? Helpers.stripFacebookTrackingParams(rawUrl)
       : rawUrl.split('?')[0];
 
-    const postId = FBDOM.extractPostId(cleanUrl, postEl) || ('fb_post_' + Math.random().toString(36).substr(2, 9));
+    let postId = FBDOM.extractPostId(cleanUrl, postEl);
+    if (!postId && actionMenuAria) {
+      // Create a deterministic hash from action menu aria label so it can be re-located reliably
+      let hash = 0;
+      for (let i = 0; i < actionMenuAria.length; i++) {
+        hash = ((hash << 5) - hash) + actionMenuAria.charCodeAt(i);
+        hash |= 0;
+      }
+      postId = 'fb_post_' + Math.abs(hash);
+    }
+    if (!postId) {
+      // Deterministic hash based on post text snippet
+      const sampleText = (postEl.textContent || '').substring(0, 50).trim();
+      let hash = 0;
+      for (let i = 0; i < sampleText.length; i++) {
+        hash = ((hash << 5) - hash) + sampleText.charCodeAt(i);
+        hash |= 0;
+      }
+      postId = 'fb_post_' + Math.abs(hash);
+    }
     
     // Tag the DOM node with unique post manager ID so actions can locate it instantly!
     postEl.setAttribute('data-fb-mgr-id', postId);
@@ -198,20 +290,35 @@ class FBScanner {
     let author = '';
     const pageTitle = document.title.split('|')[0].split('–')[0].split('-')[0].trim();
 
-    // 2a. Check avatar image alt text (e.g. "nilam's profile photo" or "Rahul की प्रोफ़ाइल फ़ोटो")
-    const avatarImg = postEl.querySelector('a[href*="/user/"] img, a[href*="/profile"] img, img[alt*="profile photo" i], img[alt*="प्रोफ़ाइल फ़ोटो" i]');
-    if (avatarImg && avatarImg.alt) {
-      const cleanAlt = avatarImg.alt
-        .replace(/'s profile photo.*$/i, '')
-        .replace(/ की प्रोफ़ाइल फ़ोटो.*$/i, '')
-        .replace(/profile picture.*$/i, '')
-        .trim();
-      if (cleanAlt && cleanAlt.length >= 2 && !cleanAlt.toLowerCase().includes('avatar')) {
-        author = cleanAlt;
+    // 2a. Check 3-dots aria-label: "Actions for this post by Suresh Mishra"
+    if (actionMenuAria) {
+      const matchEn = actionMenuAria.match(/Actions for this post by (.+)$/i);
+      if (matchEn && matchEn[1].trim()) {
+        author = matchEn[1].trim();
+      } else {
+        const matchHi = actionMenuAria.match(/(.+) की इस पोस्ट के लिए/i);
+        if (matchHi && matchHi[1].trim()) {
+          author = matchHi[1].trim();
+        }
       }
     }
 
-    // 2b. Check User Profile Links inside the post header
+    // 2b. Check avatar image alt text (e.g. "nilam's profile photo" or "Rahul की प्रोफ़ाइल फ़ोटो")
+    if (!author) {
+      const avatarImg = postEl.querySelector('a[href*="/user/"] img, a[href*="/profile"] img, img[alt*="profile photo" i], img[alt*="प्रोफ़ाइल फ़ोटो" i]');
+      if (avatarImg && avatarImg.alt) {
+        const cleanAlt = avatarImg.alt
+          .replace(/'s profile photo.*$/i, '')
+          .replace(/ की प्रोफ़ाइल फ़ोटो.*$/i, '')
+          .replace(/profile picture.*$/i, '')
+          .trim();
+        if (cleanAlt && cleanAlt.length >= 2 && !cleanAlt.toLowerCase().includes('avatar') && cleanAlt !== pageTitle) {
+          author = cleanAlt;
+        }
+      }
+    }
+
+    // 2c. Check User Profile Links inside the post header
     if (!author) {
       const userLink = postEl.querySelector('a[href*="/user/"] strong, a[href*="/user/"] span, a[href*="/profile.php"] strong');
       if (userLink && userLink.textContent.trim()) {
@@ -222,7 +329,7 @@ class FBScanner {
       }
     }
 
-    // 2c. Check Heading links (h2, h3, h4)
+    // 2d. Check Heading links (h2, h3, h4)
     if (!author) {
       const headerLinks = Array.from(postEl.querySelectorAll('h2 a[role="link"], h3 a[role="link"], h4 a[role="link"], strong a[role="link"]'));
       for (const hl of headerLinks) {
@@ -238,17 +345,18 @@ class FBScanner {
       }
     }
 
-    // 2d. Fallback to FBDOM selectors
+    // 2e. Fallback to FBDOM selectors
     if (!author) {
       const authorEl = FBDOM.findFirst(FBDOM.selectors.postAuthor, postEl);
       if (authorEl && authorEl.textContent.trim()) {
-        author = authorEl.textContent.trim();
+        const candidate = authorEl.textContent.trim();
+        if (candidate !== pageTitle) author = candidate;
       }
     }
 
-    // Filter out navigation or generic headings
-    if (!author || ['Manage Page', 'Professional dashboard', 'Insights', 'Ad Centre', 'Settings', 'Facebook'].includes(author)) {
-      author = pageTitle || 'Facebook Post';
+    // Never default author to page title for group posts
+    if (!author || author === pageTitle || ['Manage Page', 'Professional dashboard', 'Insights', 'Ad Centre', 'Settings', 'Facebook'].includes(author)) {
+      author = 'Group Member';
     }
 
     // 3. Post Text & Expand "See more" if needed
@@ -315,6 +423,7 @@ class FBScanner {
       comments,
       shares,
       views,
+      actionMenuAria: actionMenuAria || '',
       // Initial status
       status: 'SCANNED',
       isSelected: false,
@@ -334,13 +443,20 @@ class FBScanner {
     }
   }
 }
+}
+var FBScanner = window.FBScannerClass;
 
 // Global scanner instance
-const fbScannerInstance = new FBScanner();
+var fbScannerInstance = window.fbScannerInstance || new FBScanner();
+window.fbScannerInstance = fbScannerInstance;
 
 // Message listener for scanner commands
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'PING_SCANNER') {
+      sendResponse({ success: true, status: 'ALIVE' });
+      return;
+    }
     if (request.action === 'INSTANT_SCAN') {
       const posts = fbScannerInstance.instantScan();
       sendResponse({ success: true, count: posts.length, posts });

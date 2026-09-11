@@ -4,7 +4,13 @@
  * Never relies on a single fragile obfuscated CSS class.
  */
 
-const FBDOM = {
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+  try {
+    document.documentElement.setAttribute('data-fb-extension-id', chrome.runtime.id);
+  } catch (e) {}
+}
+
+var FBDOM = window.FBDOM || {
   // Cascading selector dictionaries for different Facebook UI components
   selectors: {
     // Containers holding the posts
@@ -96,36 +102,45 @@ const FBDOM = {
 
     // Post three-dot action menu trigger
     actionMenuTriggers: [
-      'div[aria-label="Actions for this post"]',
+      'div[role="button"][aria-label*="Actions for this post"]',
       'div[aria-label*="Actions for this post"]',
+      'div[role="button"][aria-label*="Actions for this"]',
       'div[aria-label*="Actions for this"]',
+      'div[role="button"][aria-label*="इस पोस्ट के लिए"]',
       'div[aria-label*="इस पोस्ट के लिए कार्रवाइयां"]',
       'div[aria-label*="इस पोस्ट के लिए कार्रवाई"]',
-      'div[aria-label*="Acciones para esta publicación"]',
-      'div[aria-label*="Hành động cho bài viết này"]',
+      'div[role="button"][aria-label*="कार्रवाइयां" i]',
+      'div[role="button"][aria-label*="कार्रवाई" i]',
       'div[aria-haspopup="menu"][role="button"]',
+      'div[aria-haspopup="menu"]',
+      '[aria-haspopup="menu"]',
       'div[aria-label="More"][role="button"]',
       'div[aria-label*="Post options"]',
       'div[aria-label*="अधिक"][role="button"]',
       'div[role="button"][aria-label*="Actions" i]',
-      'div[role="button"][aria-label*="कार्रवाइयां" i]'
+      'div[role="button"][aria-label*="विकल्प" i]',
+      'div[role="button"][aria-label*="Options" i]',
+      'div[aria-label*="विकल्प" i]'
     ],
 
     // Menu options for post deletion / removal (Facebook Groups & Pages)
     deleteMenuItems: [
-      'div[role="menuitem"]:has-text("Delete post")',
       'div[role="menuitem"]:has-text("Remove post")',
+      'div[role="menuitem"]:has-text("Delete post")',
+      'div[role="menuitem"]:has-text("Remove post and ban author")',
       'div[role="menuitem"]:has-text("Delete post and remove author")',
       'div[role="menuitem"]:has-text("Move to trash")',
       'div[role="menuitem"]:has-text("Move to bin")',
       'div[role="menuitem"]:has-text("Delete")',
+      'div[role="menuitem"]:has-text("Remove")',
       'div[role="menuitem"]:has-text("पोस्ट हटाएं")',
       'div[role="menuitem"]:has-text("हटाएं")',
       'div[role="menuitem"]:has-text("पोस्ट निकालें")',
+      'div[role="menuitem"]:has-text("ग्रुप से हटाएं")',
       'div[role="menuitem"]:has-text("ट्रैश में डालें")',
       'div[role="menuitem"]:has-text("कचरा पेटी में ले जाएं")',
-      'span:has-text("Delete post")',
       'span:has-text("Remove post")',
+      'span:has-text("Delete post")',
       'span:has-text("Move to trash")',
       'span:has-text("Move to bin")',
       'span:has-text("Delete")',
@@ -136,22 +151,24 @@ const FBDOM = {
 
     // Facebook Confirmation Modal Buttons
     modalConfirmButtons: [
-      'div[role="dialog"] div[aria-label="Delete"]',
-      'div[role="dialog"] div[aria-label="Remove"]',
-      'div[role="dialog"] div[aria-label="Move"]',
+      'div[role="dialog"] div[role="button"][aria-label="Confirm"]',
       'div[role="dialog"] div[aria-label="Confirm"]',
+      'div[role="dialog"] div[role="button"]:has-text("Confirm")',
+      'div[role="dialog"] button:has-text("Confirm")',
+      'div[role="dialog"] div[role="button"][aria-label="Remove"]',
+      'div[role="dialog"] div[aria-label="Remove"]',
+      'div[role="dialog"] div[role="button"]:has-text("Remove")',
+      'div[role="dialog"] button:has-text("Remove")',
+      'div[role="dialog"] div[role="button"][aria-label="Delete"]',
+      'div[role="dialog"] div[aria-label="Delete"]',
+      'div[role="dialog"] div[role="button"]:has-text("Delete")',
+      'div[role="dialog"] button:has-text("Delete")',
       'div[role="dialog"] div[aria-label="हटाएं"]',
       'div[role="dialog"] div[aria-label="पुष्टि करें"]',
-      'div[role="dialog"] div[aria-label="ट्रैश में डालें"]',
-      'div[role="dialog"] div[role="button"]:has-text("Delete")',
-      'div[role="dialog"] div[role="button"]:has-text("Remove")',
-      'div[role="dialog"] div[role="button"]:has-text("Move")',
-      'div[role="dialog"] div[role="button"]:has-text("Confirm")',
-      'div[role="dialog"] div[role="button"]:has-text("हटाएं")',
       'div[role="dialog"] div[role="button"]:has-text("पुष्टि करें")',
-      'div[role="dialog"] button:has-text("Delete")',
-      'div[role="dialog"] button:has-text("Remove")',
-      'div[role="dialog"] button:has-text("हटाएं")'
+      'div[role="dialog"] div[role="button"]:has-text("हटाएं")',
+      'div[role="dialog"] div[aria-label="Move"]',
+      'div[role="dialog"] div[role="button"]:has-text("Move")'
     ],
 
     // Reactions, comments, shares, views
@@ -185,6 +202,54 @@ const FBDOM = {
       'span:has-text("reproducciones")',
       'span:has-text("व्यू")'
     ]
+  },
+
+  trained: null,
+
+  /**
+   * Apply trained selectors dynamically learned from live DOM inspection
+   */
+  setTrainedSelectors(trained) {
+    if (!trained) return;
+    this.trained = trained;
+
+    if (trained.feedSelector && !this.selectors.feedContainers.includes(trained.feedSelector)) {
+      this.selectors.feedContainers.unshift(trained.feedSelector);
+    }
+    if (trained.postSelector && !this.selectors.postArticles.includes(trained.postSelector)) {
+      this.selectors.postArticles.unshift(trained.postSelector);
+    }
+    if (trained.actionMenuTriggerSelector && !this.selectors.actionMenuTriggers.includes(trained.actionMenuTriggerSelector)) {
+      this.selectors.actionMenuTriggers.unshift(trained.actionMenuTriggerSelector);
+    }
+    if (trained.deleteMenuItemSelector && !this.selectors.deleteMenuItems.includes(trained.deleteMenuItemSelector)) {
+      this.selectors.deleteMenuItems.unshift(trained.deleteMenuItemSelector);
+    }
+    if (Array.isArray(trained.modalConfirmSelectors)) {
+      for (const sel of trained.modalConfirmSelectors) {
+        if (!this.selectors.modalConfirmButtons.includes(sel)) {
+          this.selectors.modalConfirmButtons.unshift(sel);
+        }
+      }
+    }
+  },
+
+  /**
+   * Dispatches full synthetic event sequence compatible with modern Facebook React 18
+   */
+  dispatchFullClick(element) {
+    if (!element) return;
+    try {
+      element.focus();
+      const opts = { bubbles: true, cancelable: true, view: window };
+      element.dispatchEvent(new PointerEvent('pointerdown', opts));
+      element.dispatchEvent(new MouseEvent('mousedown', opts));
+      element.dispatchEvent(new PointerEvent('pointerup', opts));
+      element.dispatchEvent(new MouseEvent('mouseup', opts));
+      element.click();
+    } catch (e) {
+      try { element.click(); } catch (err) {}
+    }
   },
 
   /**

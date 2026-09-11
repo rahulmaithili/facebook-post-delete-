@@ -73,6 +73,46 @@
         </div>
       </div>
 
+      <!-- Target Facebook Group Input Card -->
+      <div class="group-target-card">
+        <div class="card-section-title">
+          <span>👥 Facebook Group Target</span>
+          <span class="sub-hint">ID or Link</span>
+        </div>
+        <div class="group-input-row">
+          <div class="group-input-wrap">
+            <input type="text" id="groupInput" placeholder="Group ID or URL (e.g. 1840651402763977)" autocomplete="off">
+          </div>
+          <button id="btnOpenGroup" class="btn btn-primary btn-sm" title="Open and navigate directly to this group">
+            <span>🚀 Open</span>
+          </button>
+        </div>
+        <!-- Recent / Saved Groups Chips -->
+        <div class="recent-groups-bar" id="recentGroupsBar" style="display: none;">
+          <span class="recent-label">Saved:</span>
+          <div class="recent-chips" id="recentChips"></div>
+        </div>
+      </div>
+
+      <!-- DOM Path Inspector & Selector Trainer Card -->
+      <div class="trainer-card" id="trainerCard">
+        <div class="trainer-header">
+          <div class="trainer-title">
+            <span>🎯 DOM Path &amp; Selector Trainer</span>
+          </div>
+          <button id="btnTrainSelectors" class="btn btn-xs btn-trainer" title="Live test DOM paths &amp; adapt selectors for this Facebook Group">
+            ⚡ Train Selectors
+          </button>
+        </div>
+        <div class="trainer-status-row" id="trainerStatusRow">
+          <span class="trainer-pill" id="pillFeed" title="Feed Container">Feed: --</span>
+          <span class="trainer-pill" id="pillPosts" title="Detected Post Elements">Posts: 0</span>
+          <span class="trainer-pill" id="pillMenu" title="3-Dots Menu Trigger">Menu: --</span>
+          <span class="trainer-pill" id="pillRemoval" title="Learned Removal Action">Action: --</span>
+        </div>
+        <div class="trainer-report-text" id="trainerReportText" style="display: none;"></div>
+      </div>
+
       <!-- Quick Stats -->
       <div class="stats-grid">
         <div class="stat-box">

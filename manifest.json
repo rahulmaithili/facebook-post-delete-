@@ -38,6 +38,7 @@
       "js": [
         "content/dom-utils.js",
         "content/facebook-detector.js",
+        "content/facebook-trainer.js",
         "content/facebook-scanner.js",
         "content/facebook-actions.js"
       ],
@@ -53,7 +54,8 @@
     {
       "resources": [
         "icons/*",
-        "dashboard/*"
+        "dashboard/*",
+        "popup/*"
       ],
       "matches": [
         "*://*.facebook.com/*"

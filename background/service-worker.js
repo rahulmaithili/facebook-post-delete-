@@ -92,8 +92,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Ensure content scripts are alive on the Facebook tab
   async function ensureContentScripts(tabId) {
     return new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, { action: 'DETECT_CONTEXT' }, (res) => {
-        if (!chrome.runtime.lastError && res) {
+      chrome.tabs.sendMessage(tabId, { action: 'PING_SCANNER' }, (res) => {
+        if (!chrome.runtime.lastError && res && res.success) {
           resolve(true);
         } else {
           if (chrome.scripting && chrome.scripting.executeScript) {
@@ -102,6 +102,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               files: [
                 'content/dom-utils.js',
                 'content/facebook-detector.js',
+                'content/facebook-trainer.js',
                 'content/facebook-scanner.js',
                 'content/facebook-actions.js'
               ]
@@ -114,6 +115,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       });
     });
+  }
+
+  // Navigate to specific Facebook Group by ID or Link
+  if (message.action === 'NAVIGATE_TO_GROUP') {
+    (async () => {
+      const input = (message.groupIdOrUrl || '').trim();
+      if (!input) {
+        sendResponse({ success: false, error: 'Group ID or URL cannot be empty.' });
+        return;
+      }
+
+      let targetUrl = '';
+      let groupId = '';
+
+      if (input.startsWith('http://') || input.startsWith('https://')) {
+        targetUrl = input;
+        const match = input.match(/facebook\.com\/groups\/([a-zA-Z0-9._-]+)/);
+        groupId = match ? match[1] : '';
+      } else if (input.includes('facebook.com/groups/')) {
+        targetUrl = `https://${input.replace(/^\/+/, '')}`;
+        const match = input.match(/facebook\.com\/groups\/([a-zA-Z0-9._-]+)/);
+        groupId = match ? match[1] : '';
+      } else {
+        // Raw Group ID or Slug (e.g. 1840651402763977)
+        groupId = input.replace(/[^a-zA-Z0-9._-]/g, '');
+        targetUrl = `https://www.facebook.com/groups/${groupId}/`;
+      }
+
+      // Find existing Facebook tab or use active tab
+      const fbTab = await findFacebookTab();
+      let tabToUse = fbTab;
+
+      if (tabToUse) {
+        await chrome.tabs.update(tabToUse.id, { url: targetUrl, active: true });
+        if (tabToUse.windowId) {
+          try { await chrome.windows.update(tabToUse.windowId, { focused: true }); } catch (e) {}
+        }
+      } else {
+        tabToUse = await chrome.tabs.create({ url: targetUrl, active: true });
+      }
+
+      // Save to recent groups in storage
+      try {
+        const stored = await chrome.storage.local.get(['fb_ai_recent_groups']);
+        const recent = Array.isArray(stored.fb_ai_recent_groups) ? stored.fb_ai_recent_groups : [];
+        const existingIdx = recent.findIndex(g => g.id === groupId || g.url === targetUrl);
+        const entry = { id: groupId || input, url: targetUrl, name: message.name || `Group ${groupId || ''}`, lastUsed: Date.now() };
+        if (existingIdx !== -1) {
+          recent[existingIdx] = { ...recent[existingIdx], ...entry };
+        } else {
+          recent.unshift(entry);
+        }
+        await chrome.storage.local.set({ fb_ai_recent_groups: recent.slice(0, 15) });
+      } catch (e) {}
+
+      sendResponse({ success: true, targetUrl, groupId, tabId: tabToUse.id });
+    })();
+    return true;
   }
 
   // Forward context detection query to Facebook tab
@@ -135,8 +194,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Forward scan and delete messages from Dashboard/Popup to Facebook Tab
-  if (['START_SCAN', 'INSTANT_SCAN', 'RESET_SCAN', 'PAUSE_SCAN', 'RESUME_SCAN', 'STOP_SCAN', 'BULK_DELETE', 'STOP_DELETE'].includes(message.action)) {
+  // Forward scan, delete, trainer and inspection messages to Facebook Tab
+  if ([
+    'START_SCAN', 'INSTANT_SCAN', 'RESET_SCAN', 'PAUSE_SCAN',
+    'RESUME_SCAN', 'STOP_SCAN', 'BULK_DELETE', 'STOP_DELETE',
+    'INSPECT_DOM_PATHS', 'TRAIN_SELECTORS'
+  ].includes(message.action)) {
     findFacebookTab().then(async (targetTab) => {
       if (!targetTab) {
         sendResponse({ success: false, reason: 'No active Facebook tab found. Please open Facebook.' });

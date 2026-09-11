@@ -47,7 +47,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnPopupDelete = document.getElementById('btnPopupDelete');
   const popupSelCount = document.getElementById('popupSelCount');
 
+  // Group Target & DOM Trainer Elements
+  const groupInput = document.getElementById('groupInput');
+  const btnOpenGroup = document.getElementById('btnOpenGroup');
+  const recentGroupsBar = document.getElementById('recentGroupsBar');
+  const recentChips = document.getElementById('recentChips');
+  const btnTrainSelectors = document.getElementById('btnTrainSelectors');
+  const pillFeed = document.getElementById('pillFeed');
+  const pillPosts = document.getElementById('pillPosts');
+  const pillMenu = document.getElementById('pillMenu');
+  const pillRemoval = document.getElementById('pillRemoval');
+  const trainerReportText = document.getElementById('trainerReportText');
+
   let activeTabId = null;
+  let currentGroupId = null;
   let isScanning = false;
   let scannedPosts = [];
   let selectedIds = new Set();
@@ -226,8 +239,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Ensure content scripts are active on the Facebook tab (auto-injects if tab was opened before extension reload)
   async function ensureContentScriptsInjected(tabId) {
     return new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, { action: 'DETECT_CONTEXT' }, (res) => {
-        if (!chrome.runtime.lastError && res) {
+      chrome.tabs.sendMessage(tabId, { action: 'PING_SCANNER' }, (res) => {
+        if (!chrome.runtime.lastError && res && res.success) {
           resolve(true);
         } else {
           // If script not injected (e.g. extension was reloaded after tab was loaded), inject programmatically
@@ -237,6 +250,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               files: [
                 'content/dom-utils.js',
                 'content/facebook-detector.js',
+                'content/facebook-trainer.js',
                 'content/facebook-scanner.js',
                 'content/facebook-actions.js'
               ]
@@ -282,6 +296,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (ctx.type === 'GROUP') {
         typeBadge.textContent = 'FB Group';
         typeBadge.className = 'badge group-badge';
+        if (ctx.id) {
+          currentGroupId = ctx.id;
+          if (groupInput && !groupInput.value) {
+            groupInput.value = ctx.id;
+          }
+          StorageManager.saveRecentGroup({ id: ctx.id, name: ctx.name, url: ctx.url }).then(() => {
+            loadRecentGroups();
+          });
+        }
       } else if (ctx.type === 'PAGE') {
         typeBadge.textContent = 'FB Page';
         typeBadge.className = 'badge page-badge';
@@ -297,6 +320,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminBadge.textContent = 'Viewer / Member';
         adminBadge.className = 'badge';
       }
+
+      // Live inspect DOM paths on this active tab
+      inspectPathsLive(activeTab.id);
     });
   }
 
@@ -306,6 +332,185 @@ document.addEventListener('DOMContentLoaded', async () => {
     contextTitle.textContent = msg;
     typeBadge.textContent = 'OFFLINE';
     adminBadge.textContent = 'Open FB Group/Page';
+  }
+
+  // Load Recent Groups into UI chips
+  async function loadRecentGroups() {
+    if (!recentChips || !recentGroupsBar) return;
+    const groups = await StorageManager.getRecentGroups();
+    if (!groups || groups.length === 0) {
+      recentGroupsBar.style.display = 'none';
+      return;
+    }
+
+    recentGroupsBar.style.display = 'flex';
+    recentChips.innerHTML = groups.slice(0, 6).map(g => {
+      const displayName = (g.name && g.name !== 'Facebook' && !g.name.includes('Checking')) ? g.name : (g.id || 'Group');
+      const safeName = Helpers.escapeHtml(displayName);
+      const safeId = Helpers.escapeHtml(g.id || g.url || '');
+      return `
+        <span class="group-chip" data-id="${safeId}" title="Target: ${safeName} (${safeId})">
+          <span class="group-chip-name">${safeName}</span>
+          <span class="group-chip-del" data-del-id="${safeId}" title="Remove from history">✕</span>
+        </span>
+      `;
+    }).join('');
+
+    // Attach click events to chips
+    recentChips.querySelectorAll('.group-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        if (e.target.classList.contains('group-chip-del')) {
+          e.stopPropagation();
+          const delId = e.target.dataset.delId;
+          StorageManager.removeRecentGroup(delId).then(() => loadRecentGroups());
+          return;
+        }
+        const targetId = chip.dataset.id;
+        if (groupInput) groupInput.value = targetId;
+        executeGroupNavigation(targetId);
+      });
+    });
+  }
+
+  // Execute navigation to Facebook Group
+  async function executeGroupNavigation(idOrUrl = null) {
+    const target = (idOrUrl || (groupInput ? groupInput.value : '')).trim();
+    if (!target) {
+      alert('Please enter a Facebook Group ID or Link (e.g. 1840651402763977)');
+      return;
+    }
+
+    if (btnOpenGroup) {
+      btnOpenGroup.disabled = true;
+      btnOpenGroup.textContent = 'Opening...';
+    }
+
+    chrome.runtime.sendMessage({
+      action: 'NAVIGATE_TO_GROUP',
+      groupIdOrUrl: target
+    }, async (res) => {
+      if (btnOpenGroup) {
+        btnOpenGroup.disabled = false;
+        btnOpenGroup.textContent = '🚀 Open';
+      }
+
+      if (res && res.success) {
+        currentGroupId = res.groupId;
+        await loadRecentGroups();
+        setTimeout(async () => {
+          await checkActiveTab();
+        }, 1500);
+      } else {
+        alert(res ? res.error : 'Failed to navigate to group');
+      }
+    });
+  }
+
+  if (btnOpenGroup) {
+    btnOpenGroup.addEventListener('click', () => executeGroupNavigation());
+  }
+
+  if (groupInput) {
+    groupInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        executeGroupNavigation();
+      }
+    });
+  }
+
+  // Live inspect DOM paths on active tab
+  // Live inspect DOM paths on active tab
+  async function inspectPathsLive(tabId = null) {
+    const targetTabId = tabId || activeTabId;
+    if (!targetTabId) return;
+
+    // Check if trained selectors already exist in storage
+    const trained = await StorageManager.getTrainedSelectors(currentGroupId);
+    if (trained && pillRemoval) {
+      pillRemoval.className = 'trainer-pill success';
+      pillRemoval.textContent = `Action: ${trained.deleteMenuItemText || 'Trained'}`;
+    }
+
+    const applyReport = (r) => {
+      if (!r) return;
+      if (pillFeed) {
+        pillFeed.className = r.feed && r.feed.found ? 'trainer-pill success' : 'trainer-pill warning';
+        pillFeed.textContent = r.feed && r.feed.found ? 'Feed: OK' : 'Feed: Standard';
+      }
+      if (pillPosts) {
+        pillPosts.className = r.posts && r.posts.found ? 'trainer-pill success' : 'trainer-pill';
+        pillPosts.textContent = `Posts: ${r.posts ? r.posts.count : 0}`;
+      }
+      if (pillMenu) {
+        pillMenu.className = r.actionTrigger && r.actionTrigger.found ? 'trainer-pill success' : 'trainer-pill warning';
+        pillMenu.textContent = r.actionTrigger && r.actionTrigger.found ? 'Menu: OK' : 'Menu: Check';
+      }
+    };
+
+    chrome.runtime.sendMessage({ action: 'INSPECT_DOM_PATHS' }, (res) => {
+      if (res && res.report) {
+        applyReport(res.report);
+      } else {
+        chrome.tabs.sendMessage(targetTabId, { action: 'INSPECT_DOM_PATHS' }, (res2) => {
+          if (res2 && res2.report) applyReport(res2.report);
+        });
+      }
+    });
+  }
+
+  // Trigger selector auto-trainer
+  if (btnTrainSelectors) {
+    btnTrainSelectors.addEventListener('click', async () => {
+      const fbTab = await getFacebookTab();
+      if (!fbTab) {
+        alert('Please open or focus the Facebook Group tab first.');
+        return;
+      }
+
+      btnTrainSelectors.disabled = true;
+      btnTrainSelectors.textContent = '⏳ Training...';
+      if (trainerReportText) {
+        trainerReportText.style.display = 'block';
+        trainerReportText.textContent = 'Testing DOM paths and checking 3-dots action menu on active post...';
+      }
+
+      await ensureContentScriptsInjected(fbTab.id);
+
+      const handleTrainingResult = async (res) => {
+        btnTrainSelectors.disabled = false;
+        btnTrainSelectors.textContent = '⚡ Train Selectors';
+
+        if (res && res.success && res.training) {
+          const t = res.training;
+          await StorageManager.saveTrainedSelectors(currentGroupId || t.groupId, t);
+
+          if (pillRemoval) {
+            pillRemoval.className = 'trainer-pill success';
+            pillRemoval.textContent = `Action: ${t.deleteMenuItemText || 'Trained'}`;
+          }
+
+          if (trainerReportText) {
+            trainerReportText.textContent = `✅ ${t.message || 'Paths trained successfully! Ready for bulk post deletion.'}`;
+          }
+
+          await inspectPathsLive(fbTab.id);
+        } else {
+          if (trainerReportText) {
+            trainerReportText.textContent = `⚠️ ${res ? res.error || (res.training && res.training.message) : 'Could not train selectors. Ensure feed posts are visible.'}`;
+          }
+        }
+      };
+
+      chrome.runtime.sendMessage({ action: 'TRAIN_SELECTORS' }, async (res) => {
+        if (!res || !res.success) {
+          chrome.tabs.sendMessage(fbTab.id, { action: 'TRAIN_SELECTORS' }, async (res2) => {
+            handleTrainingResult(res2);
+          });
+        } else {
+          handleTrainingResult(res);
+        }
+      });
+    });
   }
 
   function getTypeIcon(type) {
@@ -430,18 +635,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await ensureContentScriptsInjected(fbTab.id);
 
-    chrome.tabs.sendMessage(fbTab.id, { action: 'INSTANT_SCAN' }, async (res) => {
+    const handleInstantResult = async (res) => {
       instantScanBtnText.textContent = '⚡ Direct Scan';
       btnInstantScan.disabled = false;
 
-      if (res && res.success && res.posts) {
+      if (res && res.success && Array.isArray(res.posts)) {
         scannedPosts = res.posts;
         await StorageManager.savePosts(scannedPosts);
         popupResultsSection.style.display = 'flex';
         updateStatsDisplay();
         renderPostsList();
+        if (scannedPosts.length === 0) {
+          alert('No posts detected on screen right now. Try scrolling down slightly on the Facebook page or click "Deep Scan" to scan automatically.');
+        }
       } else {
-        alert('Could not extract posts directly. Make sure Facebook page is fully loaded.');
+        alert('Could not extract posts directly. Please refresh the Facebook page and try again.');
+      }
+    };
+
+    chrome.runtime.sendMessage({ action: 'INSTANT_SCAN' }, async (res) => {
+      if (res && res.success) {
+        await handleInstantResult(res);
+      } else {
+        chrome.tabs.sendMessage(fbTab.id, { action: 'INSTANT_SCAN' }, async (res2) => {
+          await handleInstantResult(res2);
+        });
       }
     });
   });
@@ -468,16 +686,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await ensureContentScriptsInjected(fbTab.id);
 
-    chrome.tabs.sendMessage(fbTab.id, {
+    const scanOptions = {
+      scanLimit: (settings && settings.scanLimit) || 250,
+      scanDelay: 500 // Fast scroll delay
+    };
+
+    chrome.runtime.sendMessage({
       action: 'START_SCAN',
-      options: {
-        scanLimit: settings.scanLimit || 250,
-        scanDelay: 500 // Ultra-fast scroll delay
-      }
+      options: scanOptions
     }, (res) => {
       if (!res || !res.success) {
-        alert('Could not start scanner on this page. Refresh Facebook and try again.');
-        stopScanningUi();
+        chrome.tabs.sendMessage(fbTab.id, {
+          action: 'START_SCAN',
+          options: scanOptions
+        }, (res2) => {
+          if (!res2 || !res2.success) {
+            alert('Could not start scanner on this page. Refresh Facebook and try again.');
+            stopScanningUi();
+          }
+        });
       }
     });
   });
@@ -579,11 +806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    chrome.tabs.sendMessage(fbTab.id, {
-      action: 'BULK_DELETE',
-      posts: postsToDelete,
-      options: { deleteBatchDelay: settings.deleteBatchDelay }
-    }, async (res) => {
+    const handleBulkDeleteResponse = async (res) => {
       btnPopupDelete.textContent = `Delete Selected (${selectedIds.size})`;
       btnPopupDelete.disabled = false;
 
@@ -606,10 +829,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (res.results.failed > 0) summaryMsg += `\n❌ ${res.results.failed} failed`;
         if (res.results.skipped > 0) summaryMsg += `\n⚠️ ${res.results.skipped} skipped`;
 
-        if (res.results.failed > 0 || res.results.skipped > 0) {
-          const detailMsgs = (res.results.details || [])
+        if (res.results.details && res.results.details.length > 0) {
+          const detailMsgs = res.results.details
             .filter(d => d.status !== 'SUCCESS')
-            .map(d => `• ${d.message}`)
+            .map(d => `• ${d.reason || d.error || 'Skipped'}`)
             .slice(0, 3)
             .join('\n');
           if (detailMsgs) summaryMsg += `\n\nReason:\n${detailMsgs}`;
@@ -618,6 +841,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         alert(summaryMsg);
       } else {
         alert(`Deletion error: ${res ? res.error : 'Could not communicate with Facebook tab'}`);
+      }
+    };
+
+    chrome.runtime.sendMessage({
+      action: 'BULK_DELETE',
+      posts: postsToDelete,
+      options: { deleteBatchDelay: settings.deleteBatchDelay }
+    }, (res) => {
+      if (!res || !res.success) {
+        chrome.tabs.sendMessage(fbTab.id, {
+          action: 'BULK_DELETE',
+          posts: postsToDelete,
+          options: { deleteBatchDelay: settings.deleteBatchDelay }
+        }, handleBulkDeleteResponse);
+      } else {
+        handleBulkDeleteResponse(res);
       }
     });
   });
@@ -694,6 +933,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Initialize
+  await loadRecentGroups();
   await checkActiveTab();
   await loadExistingPosts();
 });

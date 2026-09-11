@@ -43,6 +43,7 @@ class DashboardController {
 
     // Check Facebook Context
     await this.detectFacebookContext();
+    await this.loadRecentGroups();
 
     try {
       const flags = await chrome.storage.local.get('fb_trigger_quick_scan');
@@ -65,6 +66,16 @@ class DashboardController {
     this.btnMinimizeDashboard = document.getElementById('btnMinimizeDashboard');
     this.themeToggleBtn = document.getElementById('themeToggleBtn');
     this.btnOpenSettings = document.getElementById('btnOpenSettings');
+
+    // Facebook Group Target & Selector Trainer
+    this.dashGroupInput = document.getElementById('dashGroupInput');
+    this.btnDashOpenGroup = document.getElementById('btnDashOpenGroup');
+    this.dashRecentChips = document.getElementById('dashRecentChips');
+    this.dashPillFeed = document.getElementById('dashPillFeed');
+    this.dashPillPosts = document.getElementById('dashPillPosts');
+    this.dashPillMenu = document.getElementById('dashPillMenu');
+    this.dashPillRemoval = document.getElementById('dashPillRemoval');
+    this.btnDashTrain = document.getElementById('btnDashTrain');
 
     // Action Toolbar
     this.btnInstantScan = document.getElementById('btnInstantScan');
@@ -195,6 +206,19 @@ class DashboardController {
         window.open('../options/options.html');
       }
     });
+
+    // Facebook Group Target & Selector Trainer
+    if (this.btnDashOpenGroup) {
+      this.btnDashOpenGroup.addEventListener('click', () => this.navigateToGroup());
+    }
+    if (this.dashGroupInput) {
+      this.dashGroupInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.navigateToGroup();
+      });
+    }
+    if (this.btnDashTrain) {
+      this.btnDashTrain.addEventListener('click', () => this.trainSelectors());
+    }
 
     // Main Actions
     if (this.btnInstantScan) this.btnInstantScan.addEventListener('click', () => this.instantScan());
@@ -413,12 +437,143 @@ class DashboardController {
         this.navStatusDot.className = 'status-dot active';
         this.navStatusText.textContent = 'Connected to Facebook';
         this.navContextTag.textContent = `${this.context.type}: ${this.context.name.substring(0, 24)}`;
+
+        if (this.context.type === 'GROUP' && this.context.id) {
+          if (this.dashGroupInput && !this.dashGroupInput.value) {
+            this.dashGroupInput.value = this.context.id;
+          }
+          StorageManager.saveRecentGroup({ id: this.context.id, name: this.context.name, url: this.context.url }).then(() => {
+            this.loadRecentGroups();
+          });
+        }
+        this.inspectDomPaths();
       } else {
         if (!this.isDemoMode) {
           this.navStatusDot.className = 'status-dot warning';
           this.navStatusText.textContent = 'Ready (Standalone)';
           this.navContextTag.textContent = 'Open FB or Demo Mode';
         }
+      }
+    });
+  }
+
+  async loadRecentGroups() {
+    if (!this.dashRecentChips) return;
+    const groups = await StorageManager.getRecentGroups();
+    if (!groups || groups.length === 0) {
+      this.dashRecentChips.innerHTML = '';
+      return;
+    }
+
+    this.dashRecentChips.innerHTML = groups.slice(0, 5).map(g => {
+      const name = (g.name && g.name !== 'Facebook' && !g.name.includes('Connecting')) ? g.name : (g.id || 'Group');
+      const safeName = Helpers.escapeHtml(name);
+      const safeId = Helpers.escapeHtml(g.id || g.url || '');
+      return `
+        <span class="dash-group-chip" data-id="${safeId}" title="Target: ${safeName} (${safeId})">
+          <span>${safeName}</span>
+          <span class="del-x" data-del="${safeId}">✕</span>
+        </span>
+      `;
+    }).join('');
+
+    this.dashRecentChips.querySelectorAll('.dash-group-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        if (e.target.classList.contains('del-x')) {
+          e.stopPropagation();
+          StorageManager.removeRecentGroup(e.target.dataset.del).then(() => this.loadRecentGroups());
+          return;
+        }
+        const id = chip.dataset.id;
+        if (this.dashGroupInput) this.dashGroupInput.value = id;
+        this.navigateToGroup(id);
+      });
+    });
+  }
+
+  async navigateToGroup(idOrUrl = null) {
+    const target = (idOrUrl || (this.dashGroupInput ? this.dashGroupInput.value : '')).trim();
+    if (!target) {
+      alert('Please enter a Facebook Group ID or Link (e.g. 1840651402763977)');
+      return;
+    }
+
+    if (this.btnDashOpenGroup) {
+      this.btnDashOpenGroup.disabled = true;
+      this.btnDashOpenGroup.textContent = 'Opening...';
+    }
+
+    chrome.runtime.sendMessage({
+      action: 'NAVIGATE_TO_GROUP',
+      groupIdOrUrl: target
+    }, async (res) => {
+      if (this.btnDashOpenGroup) {
+        this.btnDashOpenGroup.disabled = false;
+        this.btnDashOpenGroup.textContent = '🚀 Open Group';
+      }
+
+      if (res && res.success) {
+        await this.loadRecentGroups();
+        setTimeout(async () => {
+          await this.detectFacebookContext();
+        }, 1500);
+      } else {
+        alert(res ? res.error : 'Failed to navigate to group');
+      }
+    });
+  }
+
+  async inspectDomPaths() {
+    const groupId = this.context && this.context.id ? this.context.id : null;
+    const trained = await StorageManager.getTrainedSelectors(groupId);
+    if (trained && this.dashPillRemoval) {
+      this.dashPillRemoval.className = 'dash-pill success';
+      this.dashPillRemoval.textContent = `Action: ${trained.deleteMenuItemText || 'Trained'}`;
+    }
+
+    chrome.runtime.sendMessage({ action: 'INSPECT_DOM_PATHS' }, (res) => {
+      if (!res || !res.report) return;
+      const r = res.report;
+      if (this.dashPillFeed) {
+        this.dashPillFeed.className = r.feed.found ? 'dash-pill success' : 'dash-pill warning';
+        this.dashPillFeed.textContent = r.feed.found ? 'Feed: OK' : 'Feed: Standard';
+      }
+      if (this.dashPillPosts) {
+        this.dashPillPosts.className = r.posts.found ? 'dash-pill success' : 'dash-pill';
+        this.dashPillPosts.textContent = `Posts: ${r.posts.count}`;
+      }
+      if (this.dashPillMenu) {
+        this.dashPillMenu.className = r.actionTrigger.found ? 'dash-pill success' : 'dash-pill warning';
+        this.dashPillMenu.textContent = r.actionTrigger.found ? 'Menu: OK' : 'Menu: Check';
+      }
+    });
+  }
+
+  async trainSelectors() {
+    if (this.btnDashTrain) {
+      this.btnDashTrain.disabled = true;
+      this.btnDashTrain.textContent = '⏳ Training...';
+    }
+
+    chrome.runtime.sendMessage({ action: 'TRAIN_SELECTORS' }, async (res) => {
+      if (this.btnDashTrain) {
+        this.btnDashTrain.disabled = false;
+        this.btnDashTrain.textContent = '⚡ Train Selectors';
+      }
+
+      if (res && res.success && res.training) {
+        const t = res.training;
+        const groupId = this.context && this.context.id ? this.context.id : t.groupId;
+        await StorageManager.saveTrainedSelectors(groupId, t);
+
+        if (this.dashPillRemoval) {
+          this.dashPillRemoval.className = 'dash-pill success';
+          this.dashPillRemoval.textContent = `Action: ${t.deleteMenuItemText || 'Trained'}`;
+        }
+        await this.inspectDomPaths();
+        alert(`✅ ${t.message || 'DOM Selectors trained successfully! Ready for bulk removal.'}`);
+      } else {
+        alert(`⚠️ ${res ? res.error || (res.training && res.training.message) : 'Could not train selectors. Make sure Facebook Group feed is loaded.'}`);
       }
     });
   }

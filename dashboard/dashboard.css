@@ -296,6 +296,144 @@ input:checked + .slider:before {
   border-radius: 4px;
 }
 
+/* Facebook Group Target & Selector Trainer Bar */
+.group-target-section {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 12px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.group-target-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.group-badge-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #93c5fd;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.group-input-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 380px;
+  flex: 1;
+  max-width: 550px;
+}
+
+.group-input-box input {
+  flex: 1;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.group-input-box input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.dash-recent-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dash-group-chip {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #bfdbfe;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.dash-group-chip:hover {
+  background: rgba(59, 130, 246, 0.3);
+  color: #ffffff;
+}
+
+.dash-group-chip .del-x {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.dash-group-chip .del-x:hover {
+  color: #ef4444;
+}
+
+.group-target-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trainer-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-pill {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background-color: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  font-family: monospace;
+}
+
+.dash-pill.success {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.dash-pill.warning {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.btn-trainer {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  color: #ffffff;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-trainer:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
 /* Action Toolbar */
 .toolbar-section {
   display: flex;
