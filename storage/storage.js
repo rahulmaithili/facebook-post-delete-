@@ -28,7 +28,8 @@ const STORAGE_KEYS = {
   POSTS: 'fb_ai_posts',
   CURRENT_SCAN: 'fb_ai_scan_info',
   RECENT_GROUPS: 'fb_ai_recent_groups',
-  TRAINED_SELECTORS: 'fb_ai_trained_selectors'
+  TRAINED_SELECTORS: 'fb_ai_trained_selectors',
+  SESSION: 'fb_deleter_session'
 };
 
 const _memoryStore = new Map();

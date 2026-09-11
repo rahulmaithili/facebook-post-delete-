@@ -198,7 +198,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if ([
     'START_SCAN', 'INSTANT_SCAN', 'RESET_SCAN', 'PAUSE_SCAN',
     'RESUME_SCAN', 'STOP_SCAN', 'BULK_DELETE', 'PAUSE_DELETE',
-    'RESUME_DELETE', 'STOP_DELETE', 'INSPECT_DOM_PATHS', 'TRAIN_SELECTORS'
+    'RESUME_DELETE', 'STOP_DELETE', 'INSPECT_DOM_PATHS', 'TRAIN_SELECTORS',
+    'START_AUTOMATION', 'PAUSE_AUTOMATION', 'RESUME_AUTOMATION', 'STOP_AUTOMATION',
+    'GET_AUTOMATION_STATE', 'ANALYZE_CURRENT_DIALOG'
   ].includes(message.action)) {
     findFacebookTab().then(async (targetTab) => {
       if (!targetTab) {

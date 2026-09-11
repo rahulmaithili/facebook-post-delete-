@@ -1,560 +1,1199 @@
 /**
- * FB AI Post Manager - Safe Facebook Actions & Verified Sequential Bulk Deletion
- * Enforces Anti-Accident verification, stops on unexpected DOM/CAPTCHA, never fakes success.
+ * FB AI Post Manager - Production Facebook Post Deletion Engine & State Machine
+ * Complies with strict anti-accident rules, human-paced state transitions,
+ * dynamic DOM heuristics (Profiles, Pages, Groups), and session refresh recovery.
  */
 
-if (typeof window.FBActionsClass === 'undefined') {
-  window.FBActionsClass = class FBActions {
-  constructor() {
-    this.isDeleting = false;
-    this.isPaused = false;
-  }
+(function () {
+  'use strict';
 
-  stop() {
-    this.isDeleting = false;
-  }
+  // Constants & Timeouts (Milliseconds)
+  const TIMEOUTS = {
+    MENU_OPEN: 3500,
+    DIALOG_DETECT: 5000,
+    CHECKBOX_TOGGLE: 2500,
+    DELETE_BUTTON_ENABLE: 3000,
+    DELETION_VERIFY: 5000,
+    INTER_STEP_DELAY: 400
+  };
 
-  pause() {
-    this.isPaused = true;
-  }
-
-  resume() {
-    this.isPaused = false;
-  }
+  const STORAGE_SESSION_KEY = 'fb_deleter_session';
 
   /**
-   * Sequential verified deletion of a selected list of posts
+   * Safe Console / Logger Utility
    */
-  async bulkDeletePosts(postsToDelete, options = {}, onProgress = null) {
-    if (this.isDeleting) return;
-    this.isDeleting = true;
-    this.isPaused = false;
-
-    const delayMs = options.deleteBatchDelay || 2500;
-    const results = {
-      total: postsToDelete.length,
-      successful: 0,
-      failed: 0,
-      skipped: 0,
-      details: []
-    };
-
-    // Load trained selectors if passed in options or available in storage
-    if (options.trainedSelectors) {
-      FBDOM.setTrainedSelectors(options.trainedSelectors);
-    } else if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      try {
-        const stored = await chrome.storage.local.get(['fb_ai_trained_selectors']);
-        const allTrained = stored.fb_ai_trained_selectors || {};
-        const groupMatch = window.location.href.match(/facebook\.com\/groups\/([a-zA-Z0-9._-]+)/);
-        const gId = groupMatch ? groupMatch[1] : null;
-        if (gId && allTrained[gId]) {
-          FBDOM.setTrainedSelectors(allTrained[gId]);
-        } else if (allTrained._general) {
-          FBDOM.setTrainedSelectors(allTrained._general);
-        }
-      } catch (e) {}
-    }
-
-    for (let i = 0; i < postsToDelete.length; i++) {
-      if (!this.isDeleting) {
-        if (typeof FBLogger !== 'undefined') FBLogger.warn('ACTION', 'Bulk deletion stopped by user.');
-        break;
+  const FBLog = {
+    debug: true,
+    log(step, message, data = null) {
+      if (!this.debug) return;
+      const prefix = `[FB-DELETER] [${step}]`;
+      if (data) {
+        console.log(prefix, message, data);
+      } else {
+        console.log(prefix, message);
       }
-
-      while (this.isPaused) {
-        if (!this.isDeleting) break;
-        this.updateFacebookFloatingWidget(i, postsToDelete.length, results, 'Paused by user', true);
-        await new Promise(r => setTimeout(r, 500));
-      }
-
-      const post = postsToDelete[i];
-      if (onProgress) {
-        onProgress(i + 1, postsToDelete.length, results, `Processing post ${i + 1}/${postsToDelete.length}...`);
-      }
-      this.updateFacebookFloatingWidget(i + 1, postsToDelete.length, results, `Processing post ${i + 1}/${postsToDelete.length}...`, false);
-
-      try {
-        const deleteResult = await this.deleteSinglePostVerified(post);
-        
-        if (deleteResult.status === 'SUCCESS') {
-          results.successful++;
-          results.details.push({ id: post.id, status: 'SUCCESS', message: 'Post successfully removed/deleted.' });
-        } else if (deleteResult.status === 'SKIPPED') {
-          results.skipped++;
-          results.details.push({ id: post.id, status: 'SKIPPED', message: deleteResult.reason });
-        } else {
-          results.failed++;
-          results.details.push({ id: post.id, status: 'FAILED', message: deleteResult.reason });
-        }
-      } catch (err) {
-        results.failed++;
-        results.details.push({ id: post.id, status: 'FAILED', message: err.message });
-
-        if (err.message.includes('SECURITY_HALT') || err.message.includes('CAPTCHA')) {
-          this.isDeleting = false;
-          if (typeof FBLogger !== 'undefined') {
-            FBLogger.error('SAFETY', `Halting bulk deletion immediately: ${err.message}`);
-          }
-          break;
-        }
-      }
-
-      // Safe delay between sequential deletions
-      if (i < postsToDelete.length - 1 && this.isDeleting) {
-        await new Promise(r => setTimeout(r, delayMs));
+    },
+    warn(step, message, data = null) {
+      const prefix = `[FB-DELETER][WARN] [${step}]`;
+      if (data) console.warn(prefix, message, data);
+      else console.warn(prefix, message);
+    },
+    error(step, message, diagnostic = null) {
+      console.error(`[FB-DELETER][ERROR] [${step}] ${message}`);
+      if (diagnostic) {
+        console.error(`[FB-DELETER][ERROR-DIAGNOSTIC]`, diagnostic);
       }
     }
-
-    this.isDeleting = false;
-    this.updateFacebookFloatingWidget(postsToDelete.length, postsToDelete.length, results, 'Deletion completed.', false);
-    if (onProgress) {
-      onProgress(postsToDelete.length, postsToDelete.length, results, 'Deletion process concluded.');
-    }
-
-    return results;
-  }
+  };
 
   /**
-   * Delete a single post with multi-step DOM verification
+   * =========================================================================
+   * 1. FacebookPostAdapter: Cross-Context Selector & DOM Interaction Engine
+   * Works across Facebook Profile, Facebook Page, and Facebook Group feeds.
+   * =========================================================================
    */
-  async deleteSinglePostVerified(post) {
-    // 1. Safety Check: Verify Domain
-    if (!window.location.hostname.includes('facebook.com')) {
-      return { status: 'SKIPPED', reason: 'Not on Facebook domain. Action aborted.' };
+  class FacebookPostAdapter {
+    constructor() {
+      this.processedPostKeys = new Set();
     }
 
-    // 2. Check for security or CAPTCHA dialogs
-    if (this.detectCaptchaOrRestriction()) {
-      throw new Error('SECURITY_HALT: Facebook CAPTCHA or security restriction dialog detected. Automation halted.');
+    /**
+     * Detects current Facebook context: GROUP, PAGE, or PROFILE
+     */
+    detectContext() {
+      const url = window.location.href;
+      if (url.includes('/groups/')) return 'GROUP';
+      if (url.includes('/pages/') || (typeof FBDetector !== 'undefined' && FBDetector.isPageUrl && FBDetector.isPageUrl(url))) {
+        return 'PAGE';
+      }
+      return 'PROFILE';
     }
 
-    // 3. Locate and verify the post element in the DOM
-    const postElement = await this.locatePostElement(post);
-    if (!postElement) {
-      return {
-        status: 'SKIPPED',
-        reason: 'Post element not located in current feed viewport. Skipped for safety.'
-      };
+    /**
+     * Identify actual post containers currently visible on the page
+     * Creates a unique stable temporary identifier for every post.
+     */
+    findPostContainers() {
+      const candidateSelectors = [
+        'div[role="feed"] > div',
+        'div[data-pagelet*="FeedUnit"]',
+        'div[role="article"]',
+        'div[data-pagelet*="ProfileTimeline"] div[role="article"]',
+        'div[aria-posinset]'
+      ];
+
+      const foundContainers = [];
+      const seenElements = new Set();
+
+      for (const sel of candidateSelectors) {
+        const nodes = document.querySelectorAll(sel);
+        for (const el of nodes) {
+          if (seenElements.has(el)) continue;
+
+          // Filter out composer/create-post box, toolbars, or small widgets
+          if (el.closest('[role="region"][aria-label*="Create"]') || el.closest('form')) continue;
+          if (el.getAttribute('role') === 'toolbar') continue;
+
+          const rect = el.getBoundingClientRect();
+          // Real Facebook posts have a minimum height and width
+          if (rect.height < 90 || rect.width < 250) continue;
+
+          // Generate stable post key
+          const postKey = this.generatePostKey(el);
+          if (!postKey) continue;
+
+          seenElements.add(el);
+          el.setAttribute('data-fb-post-key', postKey);
+
+          foundContainers.push({
+            element: el,
+            postKey: postKey,
+            isProcessed: this.processedPostKeys.has(postKey)
+          });
+        }
+      }
+
+      return foundContainers;
     }
 
-    // Scroll post gently into view
-    postElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await new Promise(r => setTimeout(r, 600));
+    /**
+     * Generates a stable key based on permalinks, post ID, author, or content hash
+     */
+    generatePostKey(postEl) {
+      if (!postEl) return null;
 
-    // 4. Find and open Action Menu ("...")
-    let actionMenuBtn = null;
+      // 1. Tagged attribute if already tagged
+      const existingKey = postEl.getAttribute('data-fb-post-key');
+      if (existingKey) return existingKey;
 
-    // Check by exact stored aria-label (highest accuracy!)
-    if (post.actionMenuAria) {
-      actionMenuBtn = postElement.querySelector(`div[aria-label="${post.actionMenuAria}"]`) ||
-        document.querySelector(`div[aria-label="${post.actionMenuAria}"]`);
+      // 2. Extract from permalink or post ID links
+      const link = postEl.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="/reel/"], a[href*="/videos/"]');
+      if (link && link.href) {
+        const match = link.href.match(/\/(?:posts|permalink|reel|videos)\/([a-zA-Z0-9._-]+)/) ||
+                      link.href.match(/story_fbid=([0-9]+)/) ||
+                      link.href.match(/fbid=([0-9]+)/);
+        if (match && match[1]) {
+          return `post_${match[1]}`;
+        }
+      }
+
+      // 3. Extract from data-ft or DOM attributes
+      const dataFt = postEl.getAttribute('data-ft');
+      if (dataFt) {
+        try {
+          const parsed = JSON.parse(dataFt);
+          if (parsed.top_level_post_id) return `post_${parsed.top_level_post_id}`;
+        } catch (e) {}
+      }
+
+      // 4. Stable content hash fallback: Author + text excerpt
+      const authorEl = postEl.querySelector('h2, h3, h4, strong');
+      const author = authorEl ? authorEl.textContent.trim().substring(0, 30) : 'member';
+      const text = (postEl.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 50);
+
+      if (text.length > 5) {
+        let hash = 0;
+        const combined = `${author}_${text}`;
+        for (let i = 0; i < combined.length; i++) {
+          hash = ((hash << 5) - hash) + combined.charCodeAt(i);
+          hash |= 0;
+        }
+        return `hash_${Math.abs(hash)}`;
+      }
+
+      return null;
     }
 
-    // Check by author name in aria-label: "Actions for this post by Suresh Mishra"
-    if (!actionMenuBtn && post.author && post.author !== 'Group Member' && post.author !== 'Facebook Post') {
-      actionMenuBtn = postElement.querySelector(`div[role="button"][aria-label*="Actions for this post by ${post.author}"], div[aria-label*="Actions for this post by ${post.author}"], div[aria-label*="${post.author} की इस पोस्ट के लिए"]`) ||
-        document.querySelector(`div[role="button"][aria-label*="Actions for this post by ${post.author}"], div[aria-label*="Actions for this post by ${post.author}"]`);
-    }
+    /**
+     * Find the options/3-dots menu button belonging to the post container
+     */
+    findPostMenu(postEl) {
+      if (!postEl) return null;
 
-    // Cascading fallback
-    if (!actionMenuBtn) {
-      actionMenuBtn = FBDOM.findFirst(FBDOM.selectors.actionMenuTriggers, postElement);
-    }
+      // Check 1: Button with explicit aria-haspopup="menu"
+      const menuBtn = postEl.querySelector('div[aria-haspopup="menu"][role="button"], div[aria-haspopup="menu"], [aria-haspopup="menu"]');
+      if (menuBtn && FBDOM.isElementVisible(menuBtn)) return menuBtn;
 
-    if (!actionMenuBtn) {
-      const buttons = Array.from(postElement.querySelectorAll('div[role="button"], button'));
+      // Check 2: Buttons with action/options aria-labels
+      const buttons = Array.from(postEl.querySelectorAll('div[role="button"], button'));
       for (const btn of buttons) {
+        if (!FBDOM.isElementVisible(btn)) continue;
         const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-        const hasMenu = btn.getAttribute('aria-haspopup') === 'menu' || btn.getAttribute('aria-haspopup') === 'true';
-        if (hasMenu || aria.includes('actions') || aria.includes('action') || aria.includes('more') || aria.includes('options') || aria.includes('कार्रवाई') || aria.includes('विकल्प')) {
-          actionMenuBtn = btn;
-          break;
+        if (
+          aria.includes('actions for this post') ||
+          aria.includes('actions for this') ||
+          aria.includes('post options') ||
+          aria.includes('more options') ||
+          aria.includes('इस पोस्ट के लिए') ||
+          aria.includes('कार्रवाई') ||
+          aria.includes('विकल्प') ||
+          aria === 'more' ||
+          aria === 'actions'
+        ) {
+          return btn;
         }
       }
-    }
 
-    // Positional check: Top-Right button with an SVG
-    if (!actionMenuBtn) {
-      const postRect = postElement.getBoundingClientRect();
-      const allBtns = Array.from(postElement.querySelectorAll('div[role="button"], button, [role="button"]'));
-      for (const btn of allBtns) {
+      // Check 3: Top-Right header button containing an SVG
+      const postRect = postEl.getBoundingClientRect();
+      for (const btn of buttons) {
         if (btn.closest('[role="toolbar"]') || btn.closest('form')) continue;
         const bRect = btn.getBoundingClientRect();
         const isTop = (bRect.top - postRect.top) < 140;
-        const isRight = (bRect.right > postRect.left + (postRect.width * 0.5));
+        const isRight = (bRect.right > postRect.left + (postRect.width * 0.45));
         const hasSvg = btn.querySelector('svg') !== null;
-        if (isTop && isRight && hasSvg) {
-          actionMenuBtn = btn;
-          break;
-        }
-      }
-    }
-
-    if (!actionMenuBtn) {
-      return {
-        status: 'SKIPPED',
-        reason: 'Post action menu trigger (...) could not be found. Post was skipped.'
-      };
-    }
-
-    // Click 3-dots action menu using resilient click helper
-    FBDOM.dispatchFullClick(actionMenuBtn);
-    await new Promise(r => setTimeout(r, 900));
-
-    // 5. Look for "Remove post" in open menu (as shown in user screenshot)
-    let deleteMenuItem = null;
-    for (let attempts = 0; attempts < 12; attempts++) {
-      const menuItems = Array.from(document.querySelectorAll('div[role="menu"] div[role="menuitem"], div[role="menu"] span, div[role="menuitem"], div[role="menu"] div[role="button"]'));
-      
-      // Pass 1: Prioritize exact match "Remove post" or "पोस्ट हटाएं" / "ग्रुप से हटाएं"
-      for (const mi of menuItems) {
-        const t = (mi.textContent || mi.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (t === 'remove post' || t === 'पोस्ट हटाएं' || t === 'ग्रुप से हटाएं' || t === 'delete post') {
-          deleteMenuItem = mi;
-          break;
+        if (isTop && isRight && hasSvg && FBDOM.isElementVisible(btn)) {
+          return btn;
         }
       }
 
-      // Pass 2: Match "remove post" while excluding "ban author"
-      if (!deleteMenuItem) {
-        for (const mi of menuItems) {
-          const t = (mi.textContent || mi.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (t.includes('remove post') && !t.includes('ban')) {
-            deleteMenuItem = mi;
-            break;
+      return null;
+    }
+
+    /**
+     * Open post menu and wait for the menu layer to render
+     */
+    async openPostMenu(postEl) {
+      const menuBtn = this.findPostMenu(postEl);
+      if (!menuBtn) {
+        throw new Error('Menu button ("...") not found in post container.');
+      }
+
+      // Scroll menu button smoothly into view
+      menuBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await new Promise(r => setTimeout(r, TIMEOUTS.INTER_STEP_DELAY));
+
+      FBLog.log('OPENING_MENU', 'Clicking post menu button...');
+      FBDOM.dispatchFullClick(menuBtn);
+
+      // Wait for menu layer to appear in the DOM
+      const startTime = Date.now();
+      while (Date.now() - startTime < TIMEOUTS.MENU_OPEN) {
+        const menuLayer = document.querySelector('div[role="menu"]');
+        if (menuLayer && FBDOM.isElementVisible(menuLayer)) {
+          FBLog.log('OPENING_MENU', 'Active menu layer detected in DOM.');
+          return menuLayer;
+        }
+        await new Promise(r => setTimeout(r, 150));
+      }
+
+      throw new Error(`Menu layer failed to open within ${TIMEOUTS.MENU_OPEN}ms.`);
+    }
+
+    /**
+     * Search ONLY inside the currently opened menu layer for Remove/Delete actions
+     */
+    findRemoveAction(menuLayer) {
+      if (!menuLayer) return null;
+
+      const items = Array.from(menuLayer.querySelectorAll('div[role="menuitem"], span, div[role="button"]'));
+      const context = this.detectContext();
+
+      // Pass 1: Exact matches for "Remove post" / Hindi equivalents
+      for (const item of items) {
+        const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (
+          text === 'remove post' ||
+          text === 'delete post' ||
+          text === 'move to trash' ||
+          text === 'move to bin' ||
+          text === 'पोस्ट हटाएं' ||
+          text === 'ग्रुप से हटाएं' ||
+          text === 'ट्रैश में डालें'
+        ) {
+          return item;
+        }
+      }
+
+      // Pass 2: Contextual search
+      for (const item of items) {
+        const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+
+        if (context === 'GROUP') {
+          // In groups, match "remove post" but strictly avoid "ban author"
+          if (text.includes('remove post') && !text.includes('ban')) {
+            return item;
+          }
+        } else {
+          // In Profile / Page, match "move to trash" or "delete"
+          if (text.includes('trash') || text.includes('bin') || text.includes('delete post') || text === 'delete') {
+            return item;
           }
         }
       }
 
-      // Pass 3: Fallback cascading search
-      if (!deleteMenuItem) {
-        deleteMenuItem = FBDOM.findFirst(FBDOM.selectors.deleteMenuItems, document.body);
-      }
-
-      if (!deleteMenuItem) {
-        const fallbackTerms = ['move to trash', 'delete', 'remove', 'पोस्ट निकालें', 'हटाएं'];
-        for (const mi of menuItems) {
-          const t = (mi.textContent || mi.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (fallbackTerms.some(term => t.includes(term))) {
-            deleteMenuItem = mi;
-            break;
-          }
+      // Pass 3: General fallback removal terms
+      const generalTerms = ['remove post', 'delete post', 'move to trash', 'delete', 'remove', 'हटाएं'];
+      for (const item of items) {
+        const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (generalTerms.some(term => text.includes(term)) && !text.includes('ban')) {
+          return item;
         }
       }
 
-      if (deleteMenuItem) break;
-      await new Promise(r => setTimeout(r, 200));
+      return null;
     }
 
-    if (!deleteMenuItem) {
-      // Close menu safely
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-      document.body.click();
-      return {
-        status: 'SKIPPED',
-        reason: 'No "Remove post" or "Delete post" option in menu. Check Group Admin/Moderator permissions.'
-      };
+    /**
+     * Detect newly appeared visible confirmation dialog
+     * Verifies that this is actually the post deletion confirmation dialog!
+     */
+    async waitForConfirmationDialog(timeout = TIMEOUTS.DIALOG_DETECT) {
+      const startTime = Date.now();
+      const deletionKeywords = [
+        'remove post',
+        'delete post',
+        'move to trash',
+        'which rules did this post violate',
+        'rules did this post violate',
+        'are you sure',
+        'delete',
+        'remove',
+        'trash',
+        'post will be removed',
+        'गोपनीयता',
+        'सहिष्णु',
+        'हटाएं',
+        'पुष्टि करें',
+        'नियम'
+      ];
+
+      while (Date.now() - startTime < timeout) {
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+
+        for (const dialog of dialogs) {
+          if (!FBDOM.isElementVisible(dialog)) continue;
+
+          const rect = dialog.getBoundingClientRect();
+          if (rect.width < 180 || rect.height < 120) continue;
+
+          const dialogText = (dialog.textContent || '').toLowerCase();
+          const isDeletionDialog = deletionKeywords.some(kw => dialogText.includes(kw));
+
+          if (isDeletionDialog) {
+            FBLog.log('WAITING_CONFIRMATION', 'Confirmed valid deletion dialog detected.', {
+              title: dialog.querySelector('h2, h3, [role="heading"]')?.textContent?.trim() || 'Confirmation'
+            });
+            return dialog;
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      return null;
     }
 
-    // Click Remove/Delete option ("Remove post")
-    FBDOM.dispatchFullClick(deleteMenuItem);
-    await new Promise(r => setTimeout(r, 1000));
+    /**
+     * Dynamically inspect dialog for confirmation / rule checkboxes
+     * Handles: <input type="checkbox">, role="checkbox", and aria-checked controls
+     */
+    findConfirmationCheckboxes(dialog) {
+      if (!dialog) return [];
 
-    // 6. Look for Facebook's confirmation modal dialog ("Remove post")
-    // Wait up to 3 seconds for the dialog to appear
-    let dialog = null;
-    for (let attempts = 0; attempts < 12; attempts++) {
-      dialog = document.querySelector('div[role="dialog"]');
-      if (dialog) break;
-      await new Promise(r => setTimeout(r, 250));
+      const rawControls = Array.from(dialog.querySelectorAll('div[role="checkbox"], input[type="checkbox"], [role="checkbox"], [aria-checked]'));
+      const validCheckboxes = [];
+
+      for (const ctrl of rawControls) {
+        // Exclude inputs that are not checkboxes
+        if (ctrl.tagName === 'INPUT' && ctrl.type !== 'checkbox') continue;
+
+        // Verify visibility
+        if (FBDOM.isElementVisible(ctrl) || (ctrl.parentElement && FBDOM.isElementVisible(ctrl.parentElement))) {
+          validCheckboxes.push(ctrl);
+        }
+      }
+
+      return validCheckboxes;
     }
 
-    if (dialog) {
-      // Step A: Handle Rule Checkboxes (Rule 1 & Rule 2 as specified by user)
-      // "Which rules did this post violate?"
-      // Rule 1: "1 सभी लोगों की गोपनीयता का सम्मान करें"
-      // Rule 2: "2 सहिष्णु और विनम्र रहें"
-      const ruleCheckboxes = Array.from(dialog.querySelectorAll('div[role="checkbox"], input[type="checkbox"]'));
-      
-      const checkRuleCheckbox = async (cb) => {
-        if (!cb) return;
-        const isChecked = cb.getAttribute('aria-checked') === 'true' || cb.checked === true;
-        if (!isChecked) {
-          const clickTarget = cb.closest('[role="button"]') || cb.closest('label') || cb;
-          FBDOM.dispatchFullClick(clickTarget);
+    /**
+     * Process all required confirmation checkboxes in DOM order (Rule 1, Rule 2, etc.)
+     * Verifies state after clicking. NEVER clicks an already checked checkbox!
+     */
+    async processCheckboxes(dialog) {
+      const checkboxes = this.findConfirmationCheckboxes(dialog);
+      FBLog.log('PROCESSING_CONFIRMATIONS', `Detected ${checkboxes.length} confirmation checkbox control(s).`);
+
+      for (let idx = 0; idx < checkboxes.length; idx++) {
+        const cb = checkboxes[idx];
+        const isChecked = cb.checked === true || cb.getAttribute('aria-checked') === 'true';
+
+        if (isChecked) {
+          FBLog.log('PROCESSING_CONFIRMATIONS', `Checkbox #${idx + 1} is already selected. Skipping.`);
+          continue;
+        }
+
+        FBLog.log('PROCESSING_CONFIRMATIONS', `Clicking unchecked Checkbox #${idx + 1}...`);
+        
+        // Scroll checkbox into view
+        cb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await new Promise(r => setTimeout(r, 200));
+
+        // Click target: label or wrapper button if available, else checkbox itself
+        const clickTarget = cb.closest('label') || cb.closest('[role="button"]') || cb;
+        FBDOM.dispatchFullClick(clickTarget);
+
+        // Wait for state change to be registered in DOM / React
+        const stateStart = Date.now();
+        let stateChanged = false;
+
+        while (Date.now() - stateStart < TIMEOUTS.CHECKBOX_TOGGLE) {
+          if (cb.checked === true || cb.getAttribute('aria-checked') === 'true') {
+            stateChanged = true;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
+
+        if (!stateChanged) {
+          // Retry direct click on the checkbox element itself
+          FBDOM.dispatchFullClick(cb);
           await new Promise(r => setTimeout(r, 300));
         }
-      };
 
-      if (ruleCheckboxes.length >= 2) {
-        // User explicitly specified: Check Rule 1 AND Rule 2!
-        await checkRuleCheckbox(ruleCheckboxes[0]); // Rule 1
-        await checkRuleCheckbox(ruleCheckboxes[1]); // Rule 2
-      } else if (ruleCheckboxes.length === 1) {
-        await checkRuleCheckbox(ruleCheckboxes[0]);
+        FBLog.log('PROCESSING_CONFIRMATIONS', `Checkbox #${idx + 1} verified selected.`);
+        await new Promise(r => setTimeout(r, TIMEOUTS.INTER_STEP_DELAY));
       }
 
-      // Also support radio buttons if layout uses radios
-      const radios = dialog.querySelectorAll('input[type="radio"], div[role="radio"]');
-      if (radios.length > 0) {
-        try { FBDOM.dispatchFullClick(radios[0]); } catch (e) {}
-        await new Promise(r => setTimeout(r, 300));
-      }
+      return true;
+    }
 
-      // Step B: Locate the blue "Confirm" / "पुष्टि करें" button
-      let confirmBtn = dialog.querySelector('div[role="button"][aria-label="Confirm"]') ||
-        dialog.querySelector('div[aria-label="Confirm"]') ||
-        dialog.querySelector('div[role="button"][aria-label="पुष्टि करें"]') ||
-        dialog.querySelector('div[aria-label="पुष्टि करें"]') ||
-        dialog.querySelector('button[aria-label="Confirm"]') ||
-        dialog.querySelector('div[role="button"][aria-label="Delete"]') ||
-        dialog.querySelector('div[role="button"][aria-label="Remove"]') ||
-        dialog.querySelector('div[role="button"][aria-label="हटाएं"]');
+    /**
+     * Locate the final confirmation button INSIDE the active dialog
+     * Verifies that the button is visible and enabled.
+     */
+    async findFinalDeleteButton(dialog) {
+      if (!dialog) return null;
 
-      if (!confirmBtn) {
-        const dialogBtns = Array.from(dialog.querySelectorAll('div[role="button"], button'));
-        for (const btn of dialogBtns) {
-          const t = (btn.textContent || btn.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (t.includes('cancel') || t.includes('रद्द') || t.includes('वापस') || t.includes('close')) continue;
-          if (t === 'confirm' || t === 'पुष्टि करें' || t.includes('confirm') || t.includes('delete') || t.includes('remove') || t.includes('हटाएं')) {
-            confirmBtn = btn;
-            break;
+      const confirmLabels = ['confirm', 'delete', 'remove', 'move to trash', 'move', 'continue', 'पुष्टि करें', 'हटाएं'];
+      const cancelLabels = ['cancel', 'close', 'back', 'रद्द करें', 'वापस'];
+
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < TIMEOUTS.DELETE_BUTTON_ENABLE) {
+        const buttons = Array.from(dialog.querySelectorAll('div[role="button"], button'));
+
+        for (const btn of buttons) {
+          if (!FBDOM.isElementVisible(btn)) continue;
+
+          const text = (btn.textContent || btn.getAttribute('aria-label') || '').trim().toLowerCase();
+
+          // Exclude cancel / close buttons
+          if (cancelLabels.some(c => text.includes(c))) continue;
+
+          const isMatch = confirmLabels.some(l => text === l || text.includes(l));
+          if (!isMatch) continue;
+
+          // Check whether button is enabled
+          const isDisabled = btn.disabled ||
+                             btn.getAttribute('aria-disabled') === 'true' ||
+                             btn.classList.contains('disabled');
+
+          if (!isDisabled) {
+            FBLog.log('FINAL_DELETE', `Found enabled confirmation button: "${text}"`);
+            return btn;
           }
         }
+
+        await new Promise(r => setTimeout(r, 200));
       }
 
-      if (!confirmBtn) {
-        confirmBtn = FBDOM.findFirst(FBDOM.selectors.modalConfirmButtons, dialog);
+      // Fallback: check FBDOM modal confirm selectors
+      const fallbackBtn = FBDOM.findFirst(FBDOM.selectors.modalConfirmButtons, dialog);
+      if (fallbackBtn && FBDOM.isElementVisible(fallbackBtn)) {
+        return fallbackBtn;
       }
 
-      if (confirmBtn) {
-        FBDOM.dispatchFullClick(confirmBtn);
-        // Wait for modal to disappear
-        for (let w = 0; w < 12; w++) {
-          await new Promise(r => setTimeout(r, 250));
-          if (!document.body.contains(dialog)) break;
+      return null;
+    }
+
+    /**
+     * Wait for dialog to disappear or post to be removed from the DOM
+     */
+    async waitForDeletionResult(postKey, postEl, dialog, timeout = TIMEOUTS.DELETION_VERIFY) {
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < timeout) {
+        // 1. Dialog disappeared
+        const dialogGone = !dialog || !document.body.contains(dialog) || !FBDOM.isElementVisible(dialog);
+
+        // 2. Post element removed or hidden
+        const postGone = !postEl || !document.body.contains(postEl) || !FBDOM.isElementVisible(postEl);
+
+        if (dialogGone && (postGone || Date.now() - startTime > 1500)) {
+          return { verified: true, reason: 'Dialog closed and post removed from DOM.' };
         }
-      }
-    }
 
-    // 7. Success verification
-    return { status: 'SUCCESS' };
-  }
-
-  /**
-   * Find post element in current DOM
-   */
-  async locatePostElement(post) {
-    // 1. Exact match by tagged data-fb-mgr-id (Instant match!)
-    if (post.id) {
-      const elById = document.querySelector(`[data-fb-mgr-id="${post.id}"]`);
-      if (elById) {
-        return elById;
-      }
-    }
-
-    // 2. Match by text excerpt in feed
-    if (post.text && post.text.length > 15) {
-      const excerpt = post.text.substring(0, 30).toLowerCase();
-      const articles = document.querySelectorAll('div[role="article"], div[data-pagelet^="FeedUnit"], div[role="feed"] > div');
-      for (const a of articles) {
-        if (a.textContent && a.textContent.toLowerCase().includes(excerpt)) {
-          return a;
+        // Check for Facebook error / restriction message
+        const errorAlert = document.querySelector('div[role="alert"]');
+        if (errorAlert && FBDOM.isElementVisible(errorAlert)) {
+          const errText = errorAlert.textContent || '';
+          if (errText.includes('error') || errText.includes('could not') || errText.includes('failed')) {
+            return { verified: false, reason: `Facebook error: ${errText.substring(0, 100)}` };
+          }
         }
+
+        await new Promise(r => setTimeout(r, 200));
       }
-    }
 
-    // 3. Exact match by post ID in href
-    if (post.id && !post.id.startsWith('fb_post_')) {
-      const postLink = document.querySelector(`a[href*="${post.id}"]`);
-      if (postLink) {
-        const parentArticle = postLink.closest('div[role="article"], div[data-pagelet^="FeedUnit"], div[role="feed"] > div');
-        if (parentArticle) return parentArticle;
+      // Final check: Is dialog still open?
+      if (dialog && document.body.contains(dialog) && FBDOM.isElementVisible(dialog)) {
+        return { verified: false, reason: 'Confirmation dialog remained open (timeout).' };
       }
+
+      return { verified: true, reason: 'Dialog successfully closed.' };
     }
-
-    // 4. Exact match by stored 3-dots action menu aria label!
-    if (post.actionMenuAria) {
-      const btn = document.querySelector(`div[aria-label="${post.actionMenuAria}"], div[role="button"][aria-label="${post.actionMenuAria}"]`);
-      if (btn) {
-        const article = btn.closest('div[role="article"], div[data-pagelet^="FeedUnit"]');
-        if (article) return article;
-      }
-    }
-
-    // 5. Scan all feed articles using FBDOM.verifyPostElement
-    const postArticles = FBDOM.findAll(FBDOM.selectors.postArticles);
-    for (const el of postArticles) {
-      if (FBDOM.verifyPostElement(el, post)) {
-        return el;
-      }
-    }
-
-    // 6. Retry after scrolling slightly
-    window.scrollBy({ top: 350, behavior: 'smooth' });
-    await new Promise(r => setTimeout(r, 500));
-
-    const retryArticles = FBDOM.findAll(FBDOM.selectors.postArticles);
-    for (const el of retryArticles) {
-      if (FBDOM.verifyPostElement(el, post)) {
-        return el;
-      }
-    }
-
-    return null;
   }
 
   /**
-   * Detect Facebook CAPTCHA, temporary restrictions, or login popups
+   * =========================================================================
+   * 2. FBActions State Machine & Bulk Automation Controller
+   * =========================================================================
    */
-  detectCaptchaOrRestriction() {
-    const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
-    for (const d of dialogs) {
-      const text = (d.textContent || '').toLowerCase();
-      if (text.includes('security check') || text.includes('enter the text above') || text.includes('action blocked') || text.includes('account temporarily locked') || text.includes('confirm your identity')) {
-        return true;
+  class FBActions {
+    constructor() {
+      this.adapter = new FacebookPostAdapter();
+      this.isDeleting = false;
+      this.isPaused = false;
+      this.state = 'IDLE';
+      this.session = null;
+      this.onProgressCallback = null;
+
+      // Floating panel reference
+      this.panelEl = null;
+
+      // Check for saved session recovery on startup
+      this.initRecoveryCheck();
+    }
+
+    /**
+     * Checks storage for interrupted sessions across page refreshes
+     */
+    async initRecoveryCheck() {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+
+      try {
+        const stored = await chrome.storage.local.get([STORAGE_SESSION_KEY]);
+        const saved = stored[STORAGE_SESSION_KEY];
+
+        if (saved && saved.running && (saved.deletedCount > 0 || saved.processedCount > 0)) {
+          FBLog.log('STARTUP_RECOVERY', 'Detected previous active deletion session.', saved);
+          this.session = saved;
+          if (saved.processedPostKeys) {
+            saved.processedPostKeys.forEach(k => this.adapter.processedPostKeys.add(k));
+          }
+          this.renderRecoveryFloatingPrompt(saved);
+        }
+      } catch (err) {
+        FBLog.warn('STARTUP_RECOVERY', 'Failed reading storage session.', err);
       }
     }
 
-    // Check for iframe captchas
-    const captchaFrames = document.querySelectorAll('iframe[src*="captcha"], iframe[src*="recaptcha"]');
-    return captchaFrames.length > 0;
-  }
+    /**
+     * Render recovery prompt on Facebook UI
+     */
+    renderRecoveryFloatingPrompt(saved) {
+      this.ensureFloatingPanel();
+      if (!this.panelEl) return;
 
-  /**
-   * On-Screen Floating Widget in Facebook Page DOM (shows live progress even if extension window is minimized!)
-   */
-  updateFacebookFloatingWidget(curr, total, results, msg, isPaused) {
-    try {
-      let widget = document.getElementById('fb-ai-floating-action-widget');
-      if (!widget) {
-        widget = document.createElement('div');
-        widget.id = 'fb-ai-floating-action-widget';
-        widget.style.cssText = `
-          position: fixed !important;
-          bottom: 24px !important;
-          right: 24px !important;
-          z-index: 2147483647 !important;
-          background: rgba(24, 25, 26, 0.96) !important;
-          border: 1px solid rgba(255, 255, 255, 0.2) !important;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255,255,255,0.1) !important;
-          border-radius: 12px !important;
-          padding: 12px 16px !important;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-          color: #ffffff !important;
-          display: flex !important;
-          flex-direction: column !important;
-          gap: 8px !important;
-          min-width: 270px !important;
-          max-width: 320px !important;
-          backdrop-filter: blur(12px) !important;
-          transition: all 0.25s ease !important;
-        `;
-        document.body.appendChild(widget);
-      }
+      const bodyEl = this.panelEl.querySelector('#fb-deleter-body');
+      if (!bodyEl) return;
 
-      const pct = total > 0 ? Math.round((curr / total) * 100) : 0;
-      const isFinished = curr >= total && !this.isDeleting;
-
-      widget.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${isPaused ? '#f59e0b' : isFinished ? '#10b981' : '#ef4444'};"></span>
-            <strong style="font-size: 13px; font-weight: 700; color: #fff;">FB AI Manager</strong>
+      bodyEl.innerHTML = `
+        <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 10px; margin-bottom: 8px;">
+          <div style="font-size: 12px; font-weight: 700; color: #f59e0b; margin-bottom: 4px;">⚠️ Previous Session Detected</div>
+          <div style="font-size: 11px; color: #cbd5e1; line-height: 1.4;">
+            Found interrupted session with <strong>${saved.deletedCount || 0}</strong> deleted post(s). Would you like to resume?
           </div>
-          <span style="font-size: 12px; font-weight: 600; color: #a1a1aa;">${curr}/${total}</span>
         </div>
-        <div style="font-size: 11px; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-          ${isPaused ? '⏸️ Deletion Paused' : msg || 'Processing posts...'}
-        </div>
-        <div style="height: 6px; width: 100%; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${pct}%; background: ${isPaused ? '#f59e0b' : '#ef4444'}; transition: width 0.3s ease;"></div>
-        </div>
-        <div style="display: flex; gap: 8px; margin-top: 2px;">
-          ${!isFinished ? `
-            <button id="btnFbWidgetPause" style="flex: 1; background: ${isPaused ? '#10b981' : '#f59e0b'}; color: #000; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; padding: 5px 8px; cursor: pointer;">
-              ${isPaused ? '▶️ Resume' : '⏸️ Pause'}
-            </button>
-            <button id="btnFbWidgetStop" style="flex: 1; background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); border-radius: 6px; font-weight: 600; font-size: 11px; padding: 5px 8px; cursor: pointer;">
-              ⏹️ Stop
-            </button>
-          ` : `
-            <div style="font-size: 11px; color: #10b981; font-weight: 600;">✅ Deletion Finished (${results ? results.successful : curr} removed)</div>
-          `}
+        <div style="display: flex; gap: 8px;">
+          <button id="btnRecoverResume" style="flex: 1; background: #10b981; color: #000; font-weight: 700; font-size: 11px; padding: 7px; border: none; border-radius: 6px; cursor: pointer;">
+            ▶️ RESUME SESSION
+          </button>
+          <button id="btnRecoverDiscard" style="flex: 1; background: rgba(255,255,255,0.1); color: #fff; font-size: 11px; padding: 7px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; cursor: pointer;">
+            ✕ START NEW
+          </button>
         </div>
       `;
 
-      const pauseBtn = widget.querySelector('#btnFbWidgetPause');
-      if (pauseBtn) {
-        pauseBtn.onclick = () => {
-          if (this.isPaused) {
-            this.resume();
-            if (typeof chrome !== 'undefined' && chrome.runtime) {
-              chrome.runtime.sendMessage({ action: 'DELETE_PROGRESS', data: { current: curr, total, results, isPaused: false, message: 'Resuming...' } });
-            }
-          } else {
-            this.pause();
-            if (typeof chrome !== 'undefined' && chrome.runtime) {
-              chrome.runtime.sendMessage({ action: 'DELETE_PROGRESS', data: { current: curr, total, results, isPaused: true, message: 'Paused by user' } });
-            }
-          }
-          this.updateFacebookFloatingWidget(curr, total, results, msg, this.isPaused);
-        };
-      }
-
-      const stopBtn = widget.querySelector('#btnFbWidgetStop');
-      if (stopBtn) {
-        stopBtn.onclick = () => {
-          this.stop();
-          this.updateFacebookFloatingWidget(curr, total, results, 'Stopped by user', false);
-        };
-      }
-
-      if (isFinished) {
-        setTimeout(() => {
-          if (widget && widget.parentElement) widget.parentElement.removeChild(widget);
-        }, 4000);
-      }
-    } catch (e) {}
-  }
-};
-}
-var FBActions = window.FBActionsClass;
-
-var fbActionsInstance = window.fbActionsInstance || new FBActions();
-window.fbActionsInstance = fbActionsInstance;
-
-// Listen for action commands
-if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'BULK_DELETE') {
-      fbActionsInstance.bulkDeletePosts(request.posts || [], request.options || {}, (curr, total, results, msg) => {
-        chrome.runtime.sendMessage({
-          action: 'DELETE_PROGRESS',
-          data: { current: curr, total, results, isPaused: fbActionsInstance.isPaused, message: msg }
-        });
-      }).then(res => {
-        sendResponse({ success: true, results: res });
-      }).catch(err => {
-        sendResponse({ success: false, error: err.message });
+      this.panelEl.querySelector('#btnRecoverResume')?.addEventListener('click', () => {
+        this.resumeFromSavedSession();
       });
-      return true; // Keep sendResponse open for async
-    } else if (request.action === 'PAUSE_DELETE') {
-      fbActionsInstance.pause();
-      sendResponse({ success: true, isPaused: true });
-    } else if (request.action === 'RESUME_DELETE') {
-      fbActionsInstance.resume();
-      sendResponse({ success: true, isPaused: false });
-    } else if (request.action === 'STOP_DELETE') {
-      fbActionsInstance.stop();
-      sendResponse({ success: true });
-    }
-  });
-}
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = FBActions;
-} else {
-  window.FBActions = fbActionsInstance;
-}
+      this.panelEl.querySelector('#btnRecoverDiscard')?.addEventListener('click', () => {
+        this.clearSavedSession();
+        this.destroyFloatingPanel();
+      });
+    }
+
+    async resumeFromSavedSession() {
+      if (!this.session) return;
+      FBLog.log('STARTUP_RECOVERY', 'Resuming session from saved state...');
+      this.isDeleting = true;
+      this.isPaused = false;
+      this.state = 'SCANNING';
+      this.renderFloatingPanel();
+
+      // Trigger auto-scan & continue deletion loop
+      const posts = this.adapter.findPostContainers().map(c => ({ id: c.postKey, text: '' }));
+      await this.bulkDeletePosts(posts, { autoDiscovered: true });
+    }
+
+    async clearSavedSession() {
+      this.session = null;
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        await chrome.storage.local.remove([STORAGE_SESSION_KEY]);
+      }
+    }
+
+    async saveSessionState(partial) {
+      if (!this.session) {
+        this.session = {
+          sessionId: `sess_${Date.now()}`,
+          startedAt: Date.now(),
+          mode: this.adapter.detectContext(),
+          totalCount: 0,
+          processedCount: 0,
+          deletedCount: 0,
+          failedCount: 0,
+          skippedCount: 0,
+          processedPostKeys: Array.from(this.adapter.processedPostKeys)
+        };
+      }
+
+      Object.assign(this.session, partial, {
+        running: this.isDeleting,
+        paused: this.isPaused,
+        processedPostKeys: Array.from(this.adapter.processedPostKeys),
+        updatedAt: Date.now()
+      });
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        try {
+          await chrome.storage.local.set({ [STORAGE_SESSION_KEY]: this.session });
+        } catch (e) {}
+      }
+    }
+
+    /**
+     * Safe Pause System
+     */
+    pause() {
+      this.isPaused = true;
+      this.state = 'PAUSED';
+      FBLog.log('PAUSED', 'Automation paused by user.');
+      this.saveSessionState({ paused: true });
+      this.updateFloatingPanelUI('Paused by user');
+    }
+
+    /**
+     * Safe Resume System
+     */
+    resume() {
+      this.isPaused = false;
+      this.state = 'RESUMING';
+      FBLog.log('RESUME', 'Automation resumed by user.');
+      this.saveSessionState({ paused: false });
+      this.updateFloatingPanelUI('Resuming...');
+    }
+
+    /**
+     * Safe Stop System
+     */
+    stop() {
+      this.isDeleting = false;
+      this.isPaused = false;
+      this.state = 'STOPPED';
+      FBLog.log('STOPPED', 'Automation stopped safely by user.');
+      this.clearSavedSession();
+      this.updateFloatingPanelUI('Stopped by user');
+      setTimeout(() => this.destroyFloatingPanel(), 3500);
+    }
+
+    /**
+     * Execute sequential bulk post deletion
+     */
+    async bulkDeletePosts(postsToDelete = [], options = {}, onProgress = null) {
+      if (this.isDeleting && this.state !== 'SCANNING') {
+        FBLog.warn('START', 'Bulk deletion is already running.');
+        return;
+      }
+
+      this.isDeleting = true;
+      this.isPaused = false;
+      this.state = 'STARTED';
+      this.onProgressCallback = onProgress;
+
+      const results = {
+        total: postsToDelete.length || 0,
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        details: []
+      };
+
+      await this.saveSessionState({
+        totalCount: results.total,
+        deletedCount: 0,
+        failedCount: 0,
+        skippedCount: 0
+      });
+
+      this.ensureFloatingPanel();
+      this.updateFloatingPanelUI('Initializing deletion engine...');
+
+      let postQueue = [...postsToDelete];
+
+      // Main Deletion State Machine Loop
+      let currentIndex = 0;
+
+      while (this.isDeleting && (currentIndex < postQueue.length || options.autoDiscovered)) {
+        // 1. Handle Pause State
+        while (this.isPaused) {
+          if (!this.isDeleting) break;
+          this.updateFloatingPanelUI('⏸️ Deletion Paused');
+          await new Promise(r => setTimeout(r, 400));
+        }
+
+        if (!this.isDeleting) break;
+
+        // 2. Discover post to delete
+        let targetPost = postQueue[currentIndex];
+        let postContainerEl = null;
+
+        // If auto-discovering or post not located, dynamically scan currently visible feed
+        const visibleContainers = this.adapter.findPostContainers();
+        const available = visibleContainers.filter(c => !c.isProcessed);
+
+        if (available.length > 0) {
+          // Pick next unprocessed post
+          const nextContainer = available[0];
+          postContainerEl = nextContainer.element;
+          targetPost = {
+            id: nextContainer.postKey,
+            postKey: nextContainer.postKey
+          };
+        } else if (targetPost) {
+          postContainerEl = document.querySelector(`[data-fb-post-key="${targetPost.id}"]`) ||
+                            document.querySelector(`[data-fb-mgr-id="${targetPost.id}"]`);
+        }
+
+        if (!postContainerEl) {
+          // Scroll slightly to discover more posts
+          FBLog.log('SCANNING', 'No unprocessed post visible in viewport. Scrolling down...');
+          this.updateFloatingPanelUI('Scrolling to load more posts...');
+          window.scrollBy({ top: 450, behavior: 'smooth' });
+          await new Promise(r => setTimeout(r, 1200));
+
+          const refreshed = this.adapter.findPostContainers().filter(c => !c.isProcessed);
+          if (refreshed.length === 0) {
+            FBLog.warn('SCANNING', 'No further posts found after scroll. Concluding.');
+            break;
+          }
+          postContainerEl = refreshed[0].element;
+          targetPost = { id: refreshed[0].postKey, postKey: refreshed[0].postKey };
+        }
+
+        const postKey = targetPost.postKey || targetPost.id;
+        results.processed++;
+
+        this.updateFloatingPanelUI(`Processing post ${results.processed} of ${results.total || '...'}`);
+        this.emitProgress(results.processed, results.total, results, `Processing post ${results.processed}...`);
+
+        // 3. Execute Single Post Deletion via State Machine
+        try {
+          const outcome = await this.deleteSinglePostVerified(targetPost, postContainerEl);
+
+          if (outcome.status === 'SUCCESS') {
+            results.successful++;
+            this.adapter.processedPostKeys.add(postKey);
+            results.details.push({ id: postKey, status: 'SUCCESS', message: outcome.message });
+          } else if (outcome.status === 'SKIPPED') {
+            results.skipped++;
+            this.adapter.processedPostKeys.add(postKey);
+            results.details.push({ id: postKey, status: 'SKIPPED', message: outcome.reason });
+          } else {
+            results.failed++;
+            results.details.push({ id: postKey, status: 'FAILED', message: outcome.reason });
+          }
+        } catch (err) {
+          results.failed++;
+          results.details.push({ id: postKey, status: 'FAILED', message: err.message });
+          FBLog.error('DELETE_STEP', `Error on post ${postKey}: ${err.message}`);
+
+          // Close any open dangling menus/dialogs safely
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+        }
+
+        await this.saveSessionState({
+          processedCount: results.processed,
+          deletedCount: results.successful,
+          failedCount: results.failed,
+          skippedCount: results.skipped
+        });
+
+        currentIndex++;
+
+        // Controlled human-like pacing between deletions
+        if (this.isDeleting) {
+          const delay = options.deleteBatchDelay || 2000;
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+
+      this.isDeleting = false;
+      this.state = 'COMPLETED';
+      await this.clearSavedSession();
+
+      this.updateFloatingPanelUI(`Complete: ${results.successful} deleted, ${results.failed} failed.`);
+      this.emitProgress(results.total, results.total, results, 'Bulk deletion concluded.');
+
+      return results;
+    }
+
+    /**
+     * Delete a single post through the strict verification state machine
+     */
+    async deleteSinglePostVerified(post, postElement = null) {
+      // Step 1: Ensure valid domain
+      if (!window.location.hostname.includes('facebook.com')) {
+        return { status: 'SKIPPED', reason: 'Not on facebook.com domain.' };
+      }
+
+      // Step 2: Ensure post container is alive in DOM
+      const targetElement = postElement || document.querySelector(`[data-fb-post-key="${post.id}"]`);
+      if (!targetElement) {
+        return { status: 'SKIPPED', reason: 'Post container not found in current DOM.' };
+      }
+
+      const postKey = post.id || post.postKey;
+      FBLog.log('POST_FOUND', `Targeting post: ${postKey}`);
+
+      // Step 3: Find and open post menu ("...")
+      let menuLayer = null;
+      try {
+        menuLayer = await this.adapter.openPostMenu(targetElement);
+      } catch (err) {
+        return { status: 'FAILED', reason: `Menu open failed: ${err.message}` };
+      }
+
+      // Step 4: Find Remove/Delete action in open menu
+      const removeAction = this.adapter.findRemoveAction(menuLayer);
+      if (!removeAction) {
+        // Safely close menu
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+        return { status: 'SKIPPED', reason: 'No Remove/Delete option found in menu.' };
+      }
+
+      FBLog.log('REMOVE_OPTION_FOUND', `Clicking removal action: "${(removeAction.textContent || '').trim()}"`);
+      FBDOM.dispatchFullClick(removeAction);
+
+      // Step 5: Wait for confirmation dialog (DYNAMIC MODAL DETECTION)
+      this.state = 'WAITING_CONFIRMATION';
+      const dialog = await this.adapter.waitForConfirmationDialog(TIMEOUTS.DIALOG_DETECT);
+
+      if (dialog) {
+        // Step 6: Process Confirmation & Rule Checkboxes (Rule 1, Rule 2, etc.)
+        this.state = 'PROCESSING_CONFIRMATIONS';
+        await this.adapter.processCheckboxes(dialog);
+
+        // Step 7: Locate enabled final confirmation button
+        this.state = 'FINAL_DELETE';
+        const finalBtn = await this.adapter.findFinalDeleteButton(dialog);
+
+        if (!finalBtn) {
+          throw new Error('Final confirmation button could not be located or remained disabled.');
+        }
+
+        FBLog.log('FINAL_DELETE', 'Clicking final confirmation button...');
+        FBDOM.dispatchFullClick(finalBtn);
+
+        // Step 8: Verify Deletion
+        this.state = 'VERIFYING';
+        const verifyResult = await this.adapter.waitForDeletionResult(postKey, targetElement, dialog, TIMEOUTS.DELETION_VERIFY);
+
+        if (!verifyResult.verified) {
+          return { status: 'FAILED', reason: verifyResult.reason };
+        }
+      } else {
+        // If no modal appeared, check if deletion was immediate or moved to trash
+        FBLog.warn('WAITING_CONFIRMATION', 'No confirmation modal displayed. Verifying if immediate deletion occurred.');
+        await new Promise(r => setTimeout(r, 1200));
+      }
+
+      FBLog.log('DELETED', `Post ${postKey} successfully deleted & verified.`);
+      return { status: 'SUCCESS', message: 'Post successfully deleted & verified.' };
+    }
+
+    /**
+     * =========================================================================
+     * 3. Draggable, Minimizable Floating Control Panel on Facebook DOM
+     * =========================================================================
+     */
+    ensureFloatingPanel() {
+      if (this.panelEl && document.body.contains(this.panelEl)) return;
+
+      const existing = document.getElementById('fb-deleter-floating-panel');
+      if (existing) {
+        this.panelEl = existing;
+        return;
+      }
+
+      const panel = document.createElement('div');
+      panel.id = 'fb-deleter-floating-panel';
+      panel.style.cssText = `
+        position: fixed !important;
+        bottom: 24px !important;
+        right: 24px !important;
+        width: 320px !important;
+        background: #18191a !important;
+        color: #ffffff !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75) !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+        z-index: 2147483647 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        user-select: none !important;
+      `;
+
+      panel.innerHTML = `
+        <!-- Header (Draggable Handle) -->
+        <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255, 255, 255, 0.06); cursor: move; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="fb-deleter-status-dot" style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ef4444;"></span>
+            <strong style="font-size: 13px; font-weight: 700; color: #fff;">FB POST DELETER</strong>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button id="btnPanelDiag" title="Analyze Current Dialog" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; font-size: 11px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">🔍</button>
+            <button id="btnPanelMin" title="Minimize" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; font-size: 12px; padding: 1px 6px; border-radius: 4px; cursor: pointer;">_</button>
+          </div>
+        </div>
+
+        <!-- Body -->
+        <div id="fb-deleter-body" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px;">
+            <span id="fb-panel-status-label" style="color: #cbd5e1;">Status: Running</span>
+            <strong id="fb-panel-counter" style="color: #fff;">0 / 0</strong>
+          </div>
+
+          <!-- Progress Track -->
+          <div style="height: 6px; width: 100%; background: rgba(255, 255, 255, 0.15); border-radius: 3px; overflow: hidden;">
+            <div id="fb-panel-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #ef4444, #f97316); transition: width 0.3s ease;"></div>
+          </div>
+
+          <!-- Stats Grid -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; font-size: 11px; text-align: center;">
+            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 4px;">
+              <span style="color: #10b981; font-weight: 700;" id="fb-panel-deleted">0</span>
+              <div style="color: #94a3b8; font-size: 10px;">Deleted</div>
+            </div>
+            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 4px;">
+              <span style="color: #ef4444; font-weight: 700;" id="fb-panel-failed">0</span>
+              <div style="color: #94a3b8; font-size: 10px;">Failed</div>
+            </div>
+            <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 6px; padding: 4px;">
+              <span style="color: #f59e0b; font-weight: 700;" id="fb-panel-skipped">0</span>
+              <div style="color: #94a3b8; font-size: 10px;">Skipped</div>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div style="display: flex; gap: 8px; margin-top: 2px;">
+            <button id="btnPanelPause" style="flex: 1; background: #f59e0b; color: #000; font-weight: 700; font-size: 11px; padding: 6px; border: none; border-radius: 6px; cursor: pointer;">
+              ⏸️ PAUSE
+            </button>
+            <button id="btnPanelResume" style="flex: 1; display: none; background: #10b981; color: #000; font-weight: 700; font-size: 11px; padding: 6px; border: none; border-radius: 6px; cursor: pointer;">
+              ▶️ RESUME
+            </button>
+            <button id="btnPanelStop" style="flex: 1; background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); font-weight: 600; font-size: 11px; padding: 6px; border-radius: 6px; cursor: pointer;">
+              ⏹️ STOP
+            </button>
+          </div>
+        </div>
+
+        <!-- Compact Minimized Pill (Hidden by default) -->
+        <div id="fb-deleter-minimized-pill" style="display: none; padding: 8px 12px; align-items: center; justify-content: space-between; font-size: 11px; cursor: pointer;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span id="fb-min-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444;"></span>
+            <span id="fb-min-text">FB Deleter | Running</span>
+          </div>
+          <span style="color: #60a5fa; font-size: 10px; margin-left: 8px;">[Expand]</span>
+        </div>
+      `;
+
+      document.body.appendChild(panel);
+      this.panelEl = panel;
+
+      // Make Panel Draggable
+      this.setupDraggable(panel, panel.querySelector('#fb-deleter-header'));
+
+      // Event Listeners
+      const btnPause = panel.querySelector('#btnPanelPause');
+      const btnResume = panel.querySelector('#btnPanelResume');
+      const btnStop = panel.querySelector('#btnPanelStop');
+      const btnMin = panel.querySelector('#btnPanelMin');
+      const btnDiag = panel.querySelector('#btnPanelDiag');
+      const minPill = panel.querySelector('#fb-deleter-minimized-pill');
+      const body = panel.querySelector('#fb-deleter-body');
+      const header = panel.querySelector('#fb-deleter-header');
+
+      btnPause.onclick = () => {
+        this.pause();
+        btnPause.style.display = 'none';
+        btnResume.style.display = 'inline-block';
+      };
+
+      btnResume.onclick = () => {
+        this.resume();
+        btnResume.style.display = 'none';
+        btnPause.style.display = 'inline-block';
+      };
+
+      btnStop.onclick = () => {
+        this.stop();
+      };
+
+      btnMin.onclick = () => {
+        body.style.display = 'none';
+        header.style.display = 'none';
+        minPill.style.display = 'flex';
+        panel.style.width = '240px';
+      };
+
+      minPill.onclick = () => {
+        minPill.style.display = 'none';
+        header.style.display = 'flex';
+        body.style.display = 'flex';
+        panel.style.width = '320px';
+      };
+
+      btnDiag.onclick = () => {
+        this.analyzeCurrentDialog();
+      };
+    }
+
+    /**
+     * Setup drag handling for floating panel
+     */
+    setupDraggable(panel, handle) {
+      let isDragging = false;
+      let startX = 0, startY = 0;
+      let initRight = 24, initBottom = 24;
+
+      handle.onmousedown = (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = panel.getBoundingClientRect();
+        initRight = window.innerWidth - rect.right;
+        initBottom = window.innerHeight - rect.bottom;
+        document.body.style.userSelect = 'none';
+      };
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        panel.style.right = `${Math.max(10, initRight - deltaX)}px`;
+        panel.style.bottom = `${Math.max(10, initBottom - deltaY)}px`;
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          document.body.style.userSelect = '';
+        }
+      });
+    }
+
+    updateFloatingPanelUI(statusText) {
+      this.ensureFloatingPanel();
+      if (!this.panelEl) return;
+
+      const s = this.session || {};
+      const statusLabel = this.panelEl.querySelector('#fb-panel-status-label');
+      const counterEl = this.panelEl.querySelector('#fb-panel-counter');
+      const fillEl = this.panelEl.querySelector('#fb-panel-progress-fill');
+      const delEl = this.panelEl.querySelector('#fb-panel-deleted');
+      const failEl = this.panelEl.querySelector('#fb-panel-failed');
+      const skipEl = this.panelEl.querySelector('#fb-panel-skipped');
+      const dotEl = this.panelEl.querySelector('#fb-deleter-status-dot');
+      const minText = this.panelEl.querySelector('#fb-min-text');
+      const minDot = this.panelEl.querySelector('#fb-min-dot');
+
+      if (statusLabel) statusLabel.textContent = `Status: ${this.isPaused ? 'Paused' : this.state}`;
+      if (delEl) delEl.textContent = s.deletedCount || 0;
+      if (failEl) failEl.textContent = s.failedCount || 0;
+      if (skipEl) skipEl.textContent = s.skippedCount || 0;
+
+      const current = (s.deletedCount || 0) + (s.failedCount || 0) + (s.skippedCount || 0);
+      const total = s.totalCount || current;
+      const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+
+      if (counterEl) counterEl.textContent = `${current} / ${total}`;
+      if (fillEl) fillEl.style.width = `${pct}%`;
+
+      const color = this.isPaused ? '#f59e0b' : '#ef4444';
+      if (dotEl) dotEl.style.background = color;
+      if (minDot) minDot.style.background = color;
+      if (minText) minText.textContent = `FB Deleter | ${this.isPaused ? 'Paused' : 'Running'} | ${current}/${total}`;
+    }
+
+    destroyFloatingPanel() {
+      if (this.panelEl && this.panelEl.parentElement) {
+        this.panelEl.parentElement.removeChild(this.panelEl);
+        this.panelEl = null;
+      }
+    }
+
+    /**
+     * Developer Diagnostic: Safely analyze current open dialog
+     */
+    analyzeCurrentDialog() {
+      const dialog = document.querySelector('div[role="dialog"]');
+      if (!dialog) {
+        FBLog.log('DIAGNOSTIC', 'No active dialog found in DOM.');
+        alert('No active Facebook dialog found on screen.');
+        return null;
+      }
+
+      const diagnostic = FBDOM.sanitizeElementDiagnostic(dialog);
+      FBLog.log('DIAGNOSTIC', 'Analyzed current dialog structure:', diagnostic);
+      console.table(diagnostic.buttons);
+      console.table(diagnostic.checkboxes);
+      alert(`Dialog Analyzed:\nTitle: ${diagnostic.dialogTitle || 'None'}\nButtons: ${diagnostic.buttonCount}\nCheckboxes: ${diagnostic.checkboxCount}\n(Check console for full diagnostic)`);
+      return diagnostic;
+    }
+
+    emitProgress(current, total, results, message) {
+      if (this.onProgressCallback) {
+        this.onProgressCallback(current, total, results, message);
+      }
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          chrome.runtime.sendMessage({
+            action: 'DELETE_PROGRESS',
+            data: {
+              current,
+              total,
+              results,
+              isPaused: this.isPaused,
+              message
+            }
+          });
+        } catch (e) {}
+      }
+    }
+  }
+
+  // Bind singleton instance to window
+  window.FBActionsClass = FBActions;
+  const fbActionsInstance = window.fbActionsInstance || new FBActions();
+  window.fbActionsInstance = fbActionsInstance;
+
+  // Runtime Message Listeners
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.action === 'BULK_DELETE' || request.action === 'START_AUTOMATION') {
+        fbActionsInstance.bulkDeletePosts(request.posts || [], request.options || {}).then(res => {
+          sendResponse({ success: true, results: res });
+        }).catch(err => {
+          sendResponse({ success: false, error: err.message });
+        });
+        return true;
+      } else if (request.action === 'PAUSE_DELETE' || request.action === 'PAUSE_AUTOMATION') {
+        fbActionsInstance.pause();
+        sendResponse({ success: true, isPaused: true });
+      } else if (request.action === 'RESUME_DELETE' || request.action === 'RESUME_AUTOMATION') {
+        fbActionsInstance.resume();
+        sendResponse({ success: true, isPaused: false });
+      } else if (request.action === 'STOP_DELETE' || request.action === 'STOP_AUTOMATION') {
+        fbActionsInstance.stop();
+        sendResponse({ success: true });
+      } else if (request.action === 'ANALYZE_CURRENT_DIALOG') {
+        const diag = fbActionsInstance.analyzeCurrentDialog();
+        sendResponse({ success: true, diagnostic: diag });
+      } else if (request.action === 'GET_AUTOMATION_STATE') {
+        sendResponse({
+          success: true,
+          isDeleting: fbActionsInstance.isDeleting,
+          isPaused: fbActionsInstance.isPaused,
+          state: fbActionsInstance.state,
+          session: fbActionsInstance.session
+        });
+      }
+    });
+  }
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = FBActions;
+  } else {
+    window.FBActions = fbActionsInstance;
+  }
+})();

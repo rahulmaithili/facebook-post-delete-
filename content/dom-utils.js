@@ -554,6 +554,57 @@ var FBDOM = window.FBDOM || {
     }
 
     return false;
+  },
+
+  /**
+   * Check whether an element is truly visible to the user
+   */
+  isElementVisible(element) {
+    if (!element) return false;
+    try {
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    } catch (e) {
+      return Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+    }
+  },
+
+  /**
+   * Safely extract sanitized diagnostic information from an element/dialog without sensitive tokens
+   */
+  sanitizeElementDiagnostic(element) {
+    if (!element) return null;
+    try {
+      const buttons = Array.from(element.querySelectorAll('button, div[role="button"], [role="button"]')).map(b => ({
+        tag: b.tagName,
+        text: (b.textContent || '').trim().substring(0, 50),
+        ariaLabel: b.getAttribute('aria-label'),
+        disabled: b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('disabled')
+      }));
+
+      const checkboxes = Array.from(element.querySelectorAll('input[type="checkbox"], div[role="checkbox"], [role="checkbox"]')).map(cb => ({
+        tag: cb.tagName,
+        checked: cb.checked === true || cb.getAttribute('aria-checked') === 'true',
+        ariaLabel: cb.getAttribute('aria-label'),
+        label: (cb.closest('label')?.textContent || cb.textContent || '').trim().substring(0, 80)
+      }));
+
+      return {
+        tagName: element.tagName,
+        role: element.getAttribute('role'),
+        ariaLabel: element.getAttribute('aria-label'),
+        dialogTitle: element.querySelector('h2, h3, [role="heading"]')?.textContent?.trim() || null,
+        textSnippet: (element.textContent || '').trim().substring(0, 200),
+        buttonCount: buttons.length,
+        buttons,
+        checkboxCount: checkboxes.length,
+        checkboxes
+      };
+    } catch (err) {
+      return { error: err.message };
+    }
   }
 };
 
