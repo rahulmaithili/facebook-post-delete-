@@ -162,8 +162,25 @@ if (typeof window.FBActionsClass === 'undefined') {
       const buttons = Array.from(postElement.querySelectorAll('div[role="button"], button'));
       for (const btn of buttons) {
         const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-        const hasMenu = btn.getAttribute('aria-haspopup') === 'menu';
+        const hasMenu = btn.getAttribute('aria-haspopup') === 'menu' || btn.getAttribute('aria-haspopup') === 'true';
         if (hasMenu || aria.includes('actions') || aria.includes('action') || aria.includes('more') || aria.includes('options') || aria.includes('कार्रवाई') || aria.includes('विकल्प')) {
+          actionMenuBtn = btn;
+          break;
+        }
+      }
+    }
+
+    // Positional check: Top-Right button with an SVG
+    if (!actionMenuBtn) {
+      const postRect = postElement.getBoundingClientRect();
+      const allBtns = Array.from(postElement.querySelectorAll('div[role="button"], button, [role="button"]'));
+      for (const btn of allBtns) {
+        if (btn.closest('[role="toolbar"]') || btn.closest('form')) continue;
+        const bRect = btn.getBoundingClientRect();
+        const isTop = (bRect.top - postRect.top) < 140;
+        const isRight = (bRect.right > postRect.left + (postRect.width * 0.5));
+        const hasSvg = btn.querySelector('svg') !== null;
+        if (isTop && isRight && hasSvg) {
           actionMenuBtn = btn;
           break;
         }
@@ -179,42 +196,47 @@ if (typeof window.FBActionsClass === 'undefined') {
 
     // Click 3-dots action menu using resilient click helper
     FBDOM.dispatchFullClick(actionMenuBtn);
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 900));
 
     // 5. Look for "Remove post", "Delete post", "Move to trash" option in open menu
-    let deleteMenuItem = FBDOM.findFirst(FBDOM.selectors.deleteMenuItems, document.body);
-    if (!deleteMenuItem) {
-      const menuItems = Array.from(document.querySelectorAll('div[role="menu"] div[role="menuitem"], div[role="menu"] span, div[role="menuitem"], div[role="menu"] div[role="button"]'));
-      const removeTerms = [
-        'remove post',
-        'delete post',
-        'move to trash',
-        'move to bin',
-        'delete post and remove author',
-        'remove post and ban author',
-        'remove post and mute',
-        'remove from group',
-        'decline post',
-        'delete',
-        'remove',
-        'पोस्ट हटाएं',
-        'पोस्ट निकालें',
-        'हटाएं',
-        'ग्रुप से हटाएं',
-        'ट्रैश में डालें',
-        'कचरा पेटी में भेजें'
-      ];
+    let deleteMenuItem = null;
+    for (let attempts = 0; attempts < 10; attempts++) {
+      deleteMenuItem = FBDOM.findFirst(FBDOM.selectors.deleteMenuItems, document.body);
+      if (!deleteMenuItem) {
+        const menuItems = Array.from(document.querySelectorAll('div[role="menu"] div[role="menuitem"], div[role="menu"] span, div[role="menuitem"], div[role="menu"] div[role="button"]'));
+        const removeTerms = [
+          'remove post',
+          'delete post',
+          'move to trash',
+          'move to bin',
+          'delete post and remove author',
+          'remove post and ban author',
+          'remove post and mute',
+          'remove from group',
+          'decline post',
+          'delete',
+          'remove',
+          'पोस्ट हटाएं',
+          'पोस्ट निकालें',
+          'हटाएं',
+          'ग्रुप से हटाएं',
+          'ट्रैश में डालें',
+          'कचरा पेटी में भेजें'
+        ];
 
-      for (const mi of menuItems) {
-        const t = (mi.textContent || mi.getAttribute('aria-label') || '').trim().toLowerCase();
-        for (const term of removeTerms) {
-          if (t.includes(term)) {
-            deleteMenuItem = mi;
-            break;
+        for (const mi of menuItems) {
+          const t = (mi.textContent || mi.getAttribute('aria-label') || '').trim().toLowerCase();
+          for (const term of removeTerms) {
+            if (t.includes(term)) {
+              deleteMenuItem = mi;
+              break;
+            }
           }
+          if (deleteMenuItem) break;
         }
-        if (deleteMenuItem) break;
       }
+      if (deleteMenuItem) break;
+      await new Promise(r => setTimeout(r, 200));
     }
 
     if (!deleteMenuItem) {
@@ -232,9 +254,9 @@ if (typeof window.FBActionsClass === 'undefined') {
     await new Promise(r => setTimeout(r, 1000));
 
     // 6. Look for Facebook's confirmation modal dialog ("Remove post")
-    // Wait up to 2 seconds for the dialog to appear
+    // Wait up to 2.5 seconds for the dialog to appear
     let dialog = null;
-    for (let attempts = 0; attempts < 8; attempts++) {
+    for (let attempts = 0; attempts < 10; attempts++) {
       dialog = document.querySelector('div[role="dialog"]');
       if (dialog) break;
       await new Promise(r => setTimeout(r, 250));
@@ -242,14 +264,12 @@ if (typeof window.FBActionsClass === 'undefined') {
 
     if (dialog) {
       // Step A: Handle Rule Checkboxes ("Which rules did this post violate?")
-      // As shown in Screenshots 3 & 4: Select a rule violation checkbox before confirming
       const ruleCheckboxes = Array.from(dialog.querySelectorAll('div[role="checkbox"], input[type="checkbox"]'));
       if (ruleCheckboxes.length > 0) {
         const anyChecked = ruleCheckboxes.some(cb =>
           cb.getAttribute('aria-checked') === 'true' || cb.checked === true
         );
         if (!anyChecked) {
-          // Click first rule checkbox to fulfill rule selection requirement
           try {
             FBDOM.dispatchFullClick(ruleCheckboxes[0]);
           } catch (e) {}
@@ -264,12 +284,20 @@ if (typeof window.FBActionsClass === 'undefined') {
         await new Promise(r => setTimeout(r, 300));
       }
 
-      // Step B: Locate the blue "Confirm" button
+      // Step B: Locate the blue "Confirm" / "Delete" / "Remove" button
       let confirmBtn = dialog.querySelector('div[role="button"][aria-label="Confirm"]') ||
         dialog.querySelector('div[aria-label="Confirm"]') ||
+        dialog.querySelector('div[role="button"][aria-label="Delete"]') ||
+        dialog.querySelector('div[aria-label="Delete"]') ||
+        dialog.querySelector('div[role="button"][aria-label="Remove"]') ||
+        dialog.querySelector('div[aria-label="Remove"]') ||
         dialog.querySelector('div[role="button"][aria-label="हटाएं"]') ||
         dialog.querySelector('div[aria-label="हटाएं"]') ||
+        dialog.querySelector('div[role="button"][aria-label="पुष्टि करें"]') ||
+        dialog.querySelector('div[aria-label="पुष्टि करें"]') ||
         dialog.querySelector('button[aria-label="Confirm"]') ||
+        dialog.querySelector('button[aria-label="Delete"]') ||
+        dialog.querySelector('button[aria-label="Remove"]') ||
         dialog.querySelector('button[aria-label="हटाएं"]');
 
       if (!confirmBtn) {
@@ -280,8 +308,8 @@ if (typeof window.FBActionsClass === 'undefined') {
         const dialogBtns = Array.from(dialog.querySelectorAll('div[role="button"], button'));
         for (const btn of dialogBtns) {
           const t = (btn.textContent || btn.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (t.includes('cancel') || t.includes('रद्द') || t.includes('वापस') || t.includes('close') || t.includes('बंद')) continue;
-          if (t.includes('confirm') || t.includes('remove') || t.includes('delete') || t.includes('move') || t.includes('हटाएं') || t.includes('पुष्टि') || t.includes('जारी रखें')) {
+          if (t.includes('cancel') || t.includes('रद्द') || t.includes('वापस') || t.includes('close')) continue;
+          if (t.includes('confirm') || t.includes('delete') || t.includes('remove') || t.includes('move') || t.includes('हटाएं') || t.includes('पुष्टि')) {
             confirmBtn = btn;
             break;
           }
@@ -290,15 +318,7 @@ if (typeof window.FBActionsClass === 'undefined') {
 
       if (confirmBtn) {
         FBDOM.dispatchFullClick(confirmBtn);
-        // Wait for modal to dismiss and removal to register
-        await new Promise(r => setTimeout(r, 1200));
-      }
-    } else {
-      // Fallback: Check if confirm button exists directly
-      let confirmBtn = FBDOM.findFirst(FBDOM.selectors.modalConfirmButtons, document.body);
-      if (confirmBtn) {
-        FBDOM.dispatchFullClick(confirmBtn);
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 1400));
       }
     }
 
@@ -310,16 +330,35 @@ if (typeof window.FBActionsClass === 'undefined') {
    * Find post element in current DOM
    */
   async locatePostElement(post) {
-    // 1. Exact match by tagged data-fb-mgr-id
+    // 1. Exact match by tagged data-fb-mgr-id (Instant match!)
     if (post.id) {
       const elById = document.querySelector(`[data-fb-mgr-id="${post.id}"]`);
       if (elById) {
-        const trigger = elById.querySelector('div[role="button"][aria-label*="Actions for this post"], [aria-label*="Actions for this"], [aria-haspopup="menu"]');
-        if (trigger) return elById;
+        return elById;
       }
     }
 
-    // 2. Exact match by stored 3-dots action menu aria label!
+    // 2. Match by text excerpt in feed
+    if (post.text && post.text.length > 15) {
+      const excerpt = post.text.substring(0, 30).toLowerCase();
+      const articles = document.querySelectorAll('div[role="article"], div[data-pagelet^="FeedUnit"], div[role="feed"] > div');
+      for (const a of articles) {
+        if (a.textContent && a.textContent.toLowerCase().includes(excerpt)) {
+          return a;
+        }
+      }
+    }
+
+    // 3. Exact match by post ID in href
+    if (post.id && !post.id.startsWith('fb_post_')) {
+      const postLink = document.querySelector(`a[href*="${post.id}"]`);
+      if (postLink) {
+        const parentArticle = postLink.closest('div[role="article"], div[data-pagelet^="FeedUnit"], div[role="feed"] > div');
+        if (parentArticle) return parentArticle;
+      }
+    }
+
+    // 4. Exact match by stored 3-dots action menu aria label!
     if (post.actionMenuAria) {
       const btn = document.querySelector(`div[aria-label="${post.actionMenuAria}"], div[role="button"][aria-label="${post.actionMenuAria}"]`);
       if (btn) {
@@ -328,29 +367,10 @@ if (typeof window.FBActionsClass === 'undefined') {
       }
     }
 
-    // 3. Match by Author name in 3-dots action menu aria label (e.g. "Actions for this post by Suresh Mishra")
-    if (post.author && post.author !== 'Group Member' && post.author !== 'Facebook Post') {
-      const authorBtn = document.querySelector(`div[role="button"][aria-label*="Actions for this post by ${post.author}"], div[aria-label*="Actions for this post by ${post.author}"], div[aria-label*="${post.author} की इस पोस्ट के लिए"]`);
-      if (authorBtn) {
-        const article = authorBtn.closest('div[role="article"], div[data-pagelet^="FeedUnit"]');
-        if (article) return article;
-      }
-    }
-
-    // 4. Exact match by post ID in href
-    if (post.id && !post.id.startsWith('fb_post_')) {
-      const postLink = document.querySelector(`a[href*="${post.id}"]`);
-      if (postLink) {
-        const parentArticle = postLink.closest('div[role="article"], div[data-pagelet*="FeedUnit"], div[role="feed"] > div');
-        if (parentArticle) return parentArticle;
-      }
-    }
-
-    // 5. Scan all feed articles using FBDOM.verifyPostElement (only return articles with 3-dot trigger!)
+    // 5. Scan all feed articles using FBDOM.verifyPostElement
     const postArticles = FBDOM.findAll(FBDOM.selectors.postArticles);
     for (const el of postArticles) {
-      const hasTrigger = el.querySelector('div[role="button"][aria-label*="Actions for this post"], [aria-label*="Actions for this"], [aria-haspopup="menu"]');
-      if (hasTrigger && FBDOM.verifyPostElement(el, post)) {
+      if (FBDOM.verifyPostElement(el, post)) {
         return el;
       }
     }
@@ -361,8 +381,7 @@ if (typeof window.FBActionsClass === 'undefined') {
 
     const retryArticles = FBDOM.findAll(FBDOM.selectors.postArticles);
     for (const el of retryArticles) {
-      const hasTrigger = el.querySelector('div[role="button"][aria-label*="Actions for this post"], [aria-label*="Actions for this"], [aria-haspopup="menu"]');
-      if (hasTrigger && FBDOM.verifyPostElement(el, post)) {
+      if (FBDOM.verifyPostElement(el, post)) {
         return el;
       }
     }

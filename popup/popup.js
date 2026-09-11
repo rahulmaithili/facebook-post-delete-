@@ -832,7 +832,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (res.results.details && res.results.details.length > 0) {
           const detailMsgs = res.results.details
             .filter(d => d.status !== 'SUCCESS')
-            .map(d => `• ${d.reason || d.error || 'Skipped'}`)
+            .map(d => `• ${d.message || d.reason || d.error || 'Skipped'}`)
             .slice(0, 3)
             .join('\n');
           if (detailMsgs) summaryMsg += `\n\nReason:\n${detailMsgs}`;
