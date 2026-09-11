@@ -58,6 +58,21 @@
       </div>
     </header>
 
+    <!-- Compact Mini Floating Bar (Visible when Minimized) -->
+    <div class="mini-floating-bar" id="miniFloatingBar" style="display: none;">
+      <div class="mini-status-row">
+        <span class="mini-dot pulse" id="miniStatusDot"></span>
+        <span class="mini-status-text" id="miniStatusText">FB AI Manager</span>
+        <span class="mini-counter" id="miniCounter"></span>
+      </div>
+      <div class="mini-actions-row">
+        <button id="btnMiniPause" class="mini-btn mini-btn-warning" style="display: none;" title="Pause Deletion">⏸️</button>
+        <button id="btnMiniResume" class="mini-btn mini-btn-success" style="display: none;" title="Resume Deletion">▶️</button>
+        <button id="btnMiniStop" class="mini-btn mini-btn-danger" style="display: none;" title="Stop Deletion">⏹️</button>
+        <button id="btnMiniExpand" class="mini-btn" title="Expand View">↗️ Expand</button>
+      </div>
+    </div>
+
     <!-- Collapsible Body Content -->
     <div id="popupBodyContent" class="popup-body-content">
       <!-- Context Card -->
@@ -177,6 +192,25 @@
         </div>
         <div class="scan-controls-inline">
           <button id="btnStopQuickScan" class="btn btn-xs btn-danger">Stop Scan</button>
+        </div>
+      </div>
+
+      <!-- In-Popup Bulk Deletion Progress Section -->
+      <div class="popup-delete-progress-section" id="popupDeleteProgressSection" style="display: none;">
+        <div class="delete-progress-header">
+          <div class="delete-status-wrap">
+            <span class="status-dot danger-dot pulse" id="deleteStatusDot"></span>
+            <span id="deleteProgressText">🗑️ Deleting posts...</span>
+          </div>
+          <span class="delete-count-badge" id="deleteProgressCount">0 / 0</span>
+        </div>
+        <div class="progress-bar-track danger-track">
+          <div class="progress-bar-fill danger-fill" id="deleteProgressFill" style="width: 0%;"></div>
+        </div>
+        <div class="delete-controls-inline">
+          <button id="btnPauseDelete" class="btn btn-xs btn-warning">⏸️ Pause</button>
+          <button id="btnResumeDelete" class="btn btn-xs btn-success" style="display: none;">▶️ Resume</button>
+          <button id="btnStopDelete" class="btn btn-xs btn-danger">⏹️ Stop</button>
         </div>
       </div>
 

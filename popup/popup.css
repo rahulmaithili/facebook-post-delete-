@@ -180,6 +180,144 @@ body.window-mode {
   display: none;
 }
 
+/* Compact Mini Floating Bar */
+.mini-floating-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-top: 4px;
+}
+
+.mini-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mini-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--accent-blue);
+}
+
+.mini-dot.danger {
+  background-color: var(--accent-red);
+}
+
+.mini-dot.warning {
+  background-color: var(--accent-amber);
+}
+
+.mini-status-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mini-counter {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.mini-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mini-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mini-btn:hover {
+  background: var(--bg-primary);
+  border-color: var(--text-secondary);
+}
+
+.mini-btn-warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.mini-btn-success {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.mini-btn-danger {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* In-Popup Bulk Deletion Progress Section */
+.popup-delete-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background-color: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.delete-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.delete-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-red);
+}
+
+.danger-dot {
+  background-color: var(--accent-red);
+}
+
+.delete-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.danger-track {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.danger-fill {
+  background: linear-gradient(90deg, #ef4444, #f97316);
+}
+
+.delete-controls-inline {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* Context Card */
 .context-card {
   background-color: var(--bg-secondary);

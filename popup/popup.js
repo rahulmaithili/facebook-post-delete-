@@ -47,6 +47,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnPopupDelete = document.getElementById('btnPopupDelete');
   const popupSelCount = document.getElementById('popupSelCount');
 
+  // Deletion Progress & Controls
+  const popupDeleteProgressSection = document.getElementById('popupDeleteProgressSection');
+  const deleteProgressText = document.getElementById('deleteProgressText');
+  const deleteProgressCount = document.getElementById('deleteProgressCount');
+  const deleteProgressFill = document.getElementById('deleteProgressFill');
+  const deleteStatusDot = document.getElementById('deleteStatusDot');
+  const btnPauseDelete = document.getElementById('btnPauseDelete');
+  const btnResumeDelete = document.getElementById('btnResumeDelete');
+  const btnStopDelete = document.getElementById('btnStopDelete');
+
+  // Mini Floating Bar Elements (Minimized View)
+  const miniFloatingBar = document.getElementById('miniFloatingBar');
+  const miniStatusDot = document.getElementById('miniStatusDot');
+  const miniStatusText = document.getElementById('miniStatusText');
+  const miniCounter = document.getElementById('miniCounter');
+  const btnMiniPause = document.getElementById('btnMiniPause');
+  const btnMiniResume = document.getElementById('btnMiniResume');
+  const btnMiniStop = document.getElementById('btnMiniStop');
+  const btnMiniExpand = document.getElementById('btnMiniExpand');
+
   // Group Target & DOM Trainer Elements
   const groupInput = document.getElementById('groupInput');
   const btnOpenGroup = document.getElementById('btnOpenGroup');
@@ -798,17 +818,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnPopupDelete.disabled = true;
     btnPopupDelete.textContent = 'Deleting...';
 
+    // Show In-Popup Deletion Progress
+    if (popupDeleteProgressSection) {
+      popupDeleteProgressSection.style.display = 'flex';
+      deleteProgressText.textContent = `Deleting post 1 of ${count}...`;
+      deleteProgressCount.textContent = `0 / ${count}`;
+      deleteProgressFill.style.width = '0%';
+      btnPauseDelete.style.display = 'inline-flex';
+      btnResumeDelete.style.display = 'none';
+      btnStopDelete.style.display = 'inline-flex';
+    }
+
+    // Mini Bar controls
+    btnMiniPause.style.display = 'inline-flex';
+    btnMiniResume.style.display = 'none';
+    btnMiniStop.style.display = 'inline-flex';
+    miniStatusText.textContent = `Deleting 0/${count}`;
+
     const fbTab = await getFacebookTab();
     if (!fbTab) {
       alert('Facebook tab not found. Please keep Facebook tab open.');
       btnPopupDelete.disabled = false;
       btnPopupDelete.textContent = `Delete Selected (${selectedIds.size})`;
+      if (popupDeleteProgressSection) popupDeleteProgressSection.style.display = 'none';
       return;
     }
 
     const handleBulkDeleteResponse = async (res) => {
       btnPopupDelete.textContent = `Delete Selected (${selectedIds.size})`;
       btnPopupDelete.disabled = false;
+      if (popupDeleteProgressSection) popupDeleteProgressSection.style.display = 'none';
+      btnMiniPause.style.display = 'none';
+      btnMiniResume.style.display = 'none';
+      btnMiniStop.style.display = 'none';
+      miniStatusText.textContent = 'FB AI Manager';
+      miniCounter.textContent = '';
 
       if (res && res.success) {
         const successIds = new Set(
@@ -861,7 +905,60 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Runtime progress listener for live scanning
+  // Pause / Resume / Stop deletion buttons
+  btnPauseDelete.addEventListener('click', async () => {
+    btnPauseDelete.style.display = 'none';
+    btnResumeDelete.style.display = 'inline-flex';
+    btnMiniPause.style.display = 'none';
+    btnMiniResume.style.display = 'inline-flex';
+    deleteProgressText.textContent = '⏸️ Deletion Paused';
+    miniStatusText.textContent = '⏸️ Paused';
+    deleteStatusDot.className = 'status-dot warning pulse';
+    miniStatusDot.className = 'mini-dot warning pulse';
+
+    const fbTab = await getFacebookTab();
+    chrome.runtime.sendMessage({ action: 'PAUSE_DELETE' });
+    if (fbTab) chrome.tabs.sendMessage(fbTab.id, { action: 'PAUSE_DELETE' });
+  });
+
+  btnResumeDelete.addEventListener('click', async () => {
+    btnResumeDelete.style.display = 'none';
+    btnPauseDelete.style.display = 'inline-flex';
+    btnMiniResume.style.display = 'none';
+    btnMiniPause.style.display = 'inline-flex';
+    deleteProgressText.textContent = 'Resuming deletion...';
+    miniStatusText.textContent = 'Deleting...';
+    deleteStatusDot.className = 'status-dot danger-dot pulse';
+    miniStatusDot.className = 'mini-dot danger pulse';
+
+    const fbTab = await getFacebookTab();
+    chrome.runtime.sendMessage({ action: 'RESUME_DELETE' });
+    if (fbTab) chrome.tabs.sendMessage(fbTab.id, { action: 'RESUME_DELETE' });
+  });
+
+  btnStopDelete.addEventListener('click', async () => {
+    deleteProgressText.textContent = 'Stopping deletion...';
+    miniStatusText.textContent = 'Stopping...';
+    const fbTab = await getFacebookTab();
+    chrome.runtime.sendMessage({ action: 'STOP_DELETE' });
+    if (fbTab) chrome.tabs.sendMessage(fbTab.id, { action: 'STOP_DELETE' });
+
+    setTimeout(() => {
+      popupDeleteProgressSection.style.display = 'none';
+      btnMiniPause.style.display = 'none';
+      btnMiniResume.style.display = 'none';
+      btnMiniStop.style.display = 'none';
+      miniStatusText.textContent = 'FB AI Manager';
+      btnPopupDelete.disabled = false;
+      btnPopupDelete.textContent = `Delete Selected (${selectedIds.size})`;
+    }, 800);
+  });
+
+  btnMiniPause.addEventListener('click', () => btnPauseDelete.click());
+  btnMiniResume.addEventListener('click', () => btnResumeDelete.click());
+  btnMiniStop.addEventListener('click', () => btnStopDelete.click());
+
+  // Runtime progress listener for live scanning & deletion
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'SCAN_PROGRESS') {
       const data = message.data;
@@ -884,6 +981,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateStatsDisplay();
         renderPostsList();
       }
+    } else if (message.action === 'DELETE_PROGRESS') {
+      const data = message.data;
+      if (data) {
+        popupDeleteProgressSection.style.display = 'flex';
+        deleteProgressCount.textContent = `${data.current} / ${data.total}`;
+        const pct = data.total > 0 ? Math.round((data.current / data.total) * 100) : 0;
+        deleteProgressFill.style.width = `${pct}%`;
+        miniCounter.textContent = `${data.current}/${data.total}`;
+
+        if (data.isPaused) {
+          btnPauseDelete.style.display = 'none';
+          btnResumeDelete.style.display = 'inline-flex';
+          btnMiniPause.style.display = 'none';
+          btnMiniResume.style.display = 'inline-flex';
+          deleteProgressText.textContent = '⏸️ Deletion Paused';
+          miniStatusText.textContent = '⏸️ Paused';
+          deleteStatusDot.className = 'status-dot warning pulse';
+          miniStatusDot.className = 'mini-dot warning pulse';
+        } else {
+          btnResumeDelete.style.display = 'none';
+          btnPauseDelete.style.display = 'inline-flex';
+          btnMiniResume.style.display = 'none';
+          btnMiniPause.style.display = 'inline-flex';
+          deleteProgressText.textContent = data.message || `Deleting post ${data.current} of ${data.total}...`;
+          miniStatusText.textContent = `Deleting ${data.current}/${data.total}`;
+          deleteStatusDot.className = 'status-dot danger-dot pulse';
+          miniStatusDot.className = 'mini-dot danger pulse';
+        }
+      }
     }
   });
 
@@ -896,10 +1022,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Minimize / Compact view toggle
   btnMinimize.addEventListener('click', () => {
     popupBodyContent.classList.toggle('minimized');
-    if (popupBodyContent.classList.contains('minimized')) {
+    const isMin = popupBodyContent.classList.contains('minimized');
+    if (isMin) {
       btnMinimize.title = 'Expand View';
+      miniFloatingBar.style.display = 'flex';
+      if (isWindowMode) {
+        chrome.windows.getCurrent((win) => {
+          chrome.windows.update(win.id, { height: 95 });
+        });
+      }
     } else {
       btnMinimize.title = 'Minimize / Compact View';
+      miniFloatingBar.style.display = 'none';
+      if (isWindowMode) {
+        chrome.windows.getCurrent((win) => {
+          const defaultH = (window.screen && window.screen.availHeight) ? Math.min(760, window.screen.availHeight - 40) : 740;
+          chrome.windows.update(win.id, { height: defaultH });
+        });
+      }
+    }
+  });
+
+  btnMiniExpand.addEventListener('click', () => {
+    popupBodyContent.classList.remove('minimized');
+    btnMinimize.title = 'Minimize / Compact View';
+    miniFloatingBar.style.display = 'none';
+    if (isWindowMode) {
+      chrome.windows.getCurrent((win) => {
+        const defaultH = (window.screen && window.screen.availHeight) ? Math.min(760, window.screen.availHeight - 40) : 740;
+        chrome.windows.update(win.id, { height: defaultH });
+      });
     }
   });
 

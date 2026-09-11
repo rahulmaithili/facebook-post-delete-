@@ -246,6 +246,24 @@ class DashboardController {
       this.render();
     });
 
+    // Runtime message listener for deletion progress
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((message) => {
+        if (message.action === 'DELETE_PROGRESS' && message.data) {
+          const d = message.data;
+          if (this.delStatCurrent) this.delStatCurrent.textContent = `${d.current} / ${d.total}`;
+          const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+          if (this.delModalProgressFill) this.delModalProgressFill.style.width = `${pct}%`;
+          if (this.delCurrentInfo) this.delCurrentInfo.textContent = d.message || `Processing post ${d.current} of ${d.total}...`;
+          if (d.results) {
+            if (this.delStatSuccess) this.delStatSuccess.textContent = d.results.successful || 0;
+            if (this.delStatFailed) this.delStatFailed.textContent = d.results.failed || 0;
+            if (this.delStatSkipped) this.delStatSkipped.textContent = d.results.skipped || 0;
+          }
+        }
+      });
+    }
+
     // Export
     this.btnExport.addEventListener('click', () => {
       this.exportModal.style.display = 'flex';

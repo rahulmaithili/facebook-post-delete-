@@ -197,8 +197,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Forward scan, delete, trainer and inspection messages to Facebook Tab
   if ([
     'START_SCAN', 'INSTANT_SCAN', 'RESET_SCAN', 'PAUSE_SCAN',
-    'RESUME_SCAN', 'STOP_SCAN', 'BULK_DELETE', 'STOP_DELETE',
-    'INSPECT_DOM_PATHS', 'TRAIN_SELECTORS'
+    'RESUME_SCAN', 'STOP_SCAN', 'BULK_DELETE', 'PAUSE_DELETE',
+    'RESUME_DELETE', 'STOP_DELETE', 'INSPECT_DOM_PATHS', 'TRAIN_SELECTORS'
   ].includes(message.action)) {
     findFacebookTab().then(async (targetTab) => {
       if (!targetTab) {
