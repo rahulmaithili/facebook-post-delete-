@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "FB AI Post Manager",
+  "name": "FB Post Deleter Pro - Rahul Scripts",
   "version": "1.0.0",
-  "description": "Production-ready Chrome Extension for Facebook Group and Page administrators to scan, analyze with AI, filter, and safely bulk-manage posts.",
+  "description": "Production-ready Chrome Extension by Rahul Scripts for Facebook Group and Page administrators to scan, analyze, filter, and safely bulk-delete posts.",
   "permissions": [
     "storage",
     "activeTab",
@@ -19,7 +19,7 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "FB AI Post Manager",
+    "default_title": "FB Post Deleter Pro",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

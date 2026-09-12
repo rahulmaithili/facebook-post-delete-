@@ -10,10 +10,10 @@
 
   // Constants & Timeouts (Milliseconds)
   const TIMEOUTS = {
-    MENU_OPEN: 3500,
-    DIALOG_DETECT: 5000,
+    MENU_OPEN: 5000,
+    DIALOG_DETECT: 6000,
     CHECKBOX_TOGGLE: 2500,
-    DELETE_BUTTON_ENABLE: 3000,
+    DELETE_BUTTON_ENABLE: 4000,
     DELETION_VERIFY: 5000,
     INTER_STEP_DELAY: 400
   };
@@ -235,12 +235,49 @@
       FBDOM.dispatchFullClick(menuBtn);
 
       const startTime = Date.now();
+      let retryClicked = false;
+
       while (Date.now() - startTime < TIMEOUTS.MENU_OPEN) {
-        const menuLayer = document.querySelector('div[role="menu"]');
-        if (menuLayer && FBDOM.isElementVisible(menuLayer)) {
-          FBLog.log('OPENING_MENU', 'Active menu layer detected in DOM.');
-          return menuLayer;
+        // 1. Search candidate menus in reverse DOM order (portals are placed at end of body)
+        const candidateMenus = Array.from(document.querySelectorAll('[role="menu"], div[data-pagelet*="Menu"], div[aria-label*="Actions" i], div[aria-label*="Menu" i]'));
+        for (let i = candidateMenus.length - 1; i >= 0; i--) {
+          const menu = candidateMenus[i];
+          if (FBDOM.isElementVisible(menu)) {
+            const items = menu.querySelectorAll('[role="menuitem"], div[tabindex="0"], div[role="button"], span');
+            if (items.length >= 2) {
+              FBLog.log('OPENING_MENU', 'Active menu layer detected in DOM.');
+              return menu;
+            }
+          }
         }
+
+        // 2. Direct check for visible menu items in document (handles custom Facebook popover wrappers)
+        const visibleItems = Array.from(document.querySelectorAll('[role="menuitem"], div[tabindex="0"][role="button"]'))
+          .filter(el => FBDOM.isElementVisible(el));
+        for (let i = visibleItems.length - 1; i >= 0; i--) {
+          const text = (visibleItems[i].textContent || '').toLowerCase();
+          if (
+            text.includes('bin') || text.includes('trash') || text.includes('pin') ||
+            text.includes('save') || text.includes('edit') || text.includes('remove') ||
+            text.includes('archive') || text.includes('delete') || text.includes('हटाएं')
+          ) {
+            const parentMenu = visibleItems[i].closest('[role="menu"]') ||
+                               visibleItems[i].closest('div[data-pagelet*="Menu"]') ||
+                               visibleItems[i].parentElement?.parentElement;
+            if (parentMenu) {
+              FBLog.log('OPENING_MENU', 'Active menu layer detected via visible menu items.');
+              return parentMenu;
+            }
+          }
+        }
+
+        // Retry clicking menu button once if 2 seconds passed without menu detection
+        if (!retryClicked && Date.now() - startTime > 2000) {
+          retryClicked = true;
+          FBLog.warn('OPENING_MENU', 'Menu layer taking longer than 2s to render. Retrying button click...');
+          FBDOM.dispatchFullClick(menuBtn);
+        }
+
         await new Promise(r => setTimeout(r, 150));
       }
 
@@ -248,19 +285,28 @@
     }
 
     /**
-     * Search ONLY inside the currently opened menu layer for Remove/Delete actions
+     * Search inside the currently opened menu layer for Remove/Delete actions
      * Accurately distinguishes between Page ("Move to bin") and Group ("Remove post").
+     * Includes document-level fallback and auto-scrolling to ensure bottom items like "Move to bin" are reachable.
      */
     findRemoveAction(menuLayer) {
       if (!menuLayer) return null;
 
-      const items = Array.from(menuLayer.querySelectorAll('div[role="menuitem"], div[role="button"], [role="menuitem"]'));
-      const searchItems = items.length > 0 ? items : Array.from(menuLayer.querySelectorAll('div, span, a'));
+      let items = Array.from(menuLayer.querySelectorAll('div[role="menuitem"], div[role="button"], [role="menuitem"]'));
+      if (items.length === 0) {
+        items = Array.from(menuLayer.querySelectorAll('div, span, a'));
+      }
+
+      // Document-level fallback if menuLayer was a sub-container missing items
+      const docItems = Array.from(document.querySelectorAll('[role="menuitem"], div[data-pagelet*="Menu"] [role="button"]'))
+        .filter(el => FBDOM.isElementVisible(el));
+      const combinedItems = [...items, ...docItems];
+
       const context = this.detectContext();
 
       // Priority 1: PAGE mode or detected Page -> prioritize "Move to bin" / "Move to trash"
       if (context === 'PAGE' || context === 'PROFILE') {
-        for (const item of searchItems) {
+        for (const item of combinedItems) {
           const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
           // Never click "Move to archive" which is located right above "Move to bin"
           if (text.includes('archive') || text.includes('आर्काइव')) continue;
@@ -276,6 +322,9 @@
             text.includes('बिन में ले जाएं')
           ) {
             FBLog.log('REMOVE_OPTION_FOUND', `Found Page Move to bin item: "${text.substring(0, 35)}"`);
+            try {
+              item.scrollIntoView({ block: 'center', behavior: 'instant' });
+            } catch (e) {}
             return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
           }
         }
@@ -283,7 +332,7 @@
 
       // Priority 2: GROUP mode -> look for "Remove post" / "Delete post"
       if (context === 'GROUP') {
-        for (const item of searchItems) {
+        for (const item of combinedItems) {
           const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
           if (text.includes('ban')) continue;
 
@@ -296,13 +345,16 @@
             text.includes('ग्रुप से हटाएं')
           ) {
             FBLog.log('REMOVE_OPTION_FOUND', `Found Group removal item: "${text.substring(0, 35)}"`);
+            try {
+              item.scrollIntoView({ block: 'center', behavior: 'instant' });
+            } catch (e) {}
             return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
           }
         }
       }
 
       // Priority 3: General fallback across all Facebook layouts
-      for (const item of searchItems) {
+      for (const item of combinedItems) {
         const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
         if (text.includes('archive') || text.includes('ban')) continue;
 
@@ -318,6 +370,9 @@
           text.includes('ट्रैश')
         ) {
           FBLog.log('REMOVE_OPTION_FOUND', `Found fallback removal item: "${text.substring(0, 35)}"`);
+          try {
+            item.scrollIntoView({ block: 'center', behavior: 'instant' });
+          } catch (e) {}
           return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
         }
       }
@@ -1067,6 +1122,11 @@
         return { status: 'SKIPPED', reason: 'No Remove/Delete option found in menu.' };
       }
 
+      try {
+        removeAction.scrollIntoView({ block: 'center', behavior: 'instant' });
+        await new Promise(r => setTimeout(r, 250));
+      } catch (e) {}
+
       FBLog.log('REMOVE_OPTION_FOUND', `Clicking removal action: "${(removeAction.textContent || '').trim()}"`);
       this.addActivityLog(`Action found: "${(removeAction.textContent || '').trim()}". Clicking...`, 'info');
       FBDOM.dispatchFullClick(removeAction);
@@ -1216,8 +1276,8 @@
               RS
             </div>
             <div>
-              <div style="font-size: 12px; font-weight: 800; color: #fff; line-height: 1.1; letter-spacing: 0.3px;">Rahul Scripts</div>
-              <div style="font-size: 8.5px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px;">AUTOMATION • SOLUTIONS</div>
+              <div style="font-size: 12px; font-weight: 800; color: #fff; line-height: 1.1; letter-spacing: 0.3px;">FB Post Deleter Pro</div>
+              <div style="font-size: 8.5px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px;">BY RAHUL SCRIPTS • AUTOMATION</div>
             </div>
           </div>
           <div style="display: flex; align-items: center; gap: 5px;">
@@ -1303,7 +1363,7 @@
               <button id="btnPanelClearLog" style="background: transparent; border: none; color: #38bdf8; font-size: 9.5px; cursor: pointer; text-decoration: underline;">Clear Log</button>
             </div>
             <div id="fb-activity-log-box" style="height: 105px; max-height: 105px; overflow-y: auto; background: #060b14; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 5px; padding: 5px 7px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 9.5px; line-height: 1.35; color: #94a3b8; display: flex; flex-direction: column; gap: 2px;">
-              <div style="color: #64748b;">[Ready] Rahul Scripts Automation Engine active.</div>
+              <div style="color: #64748b;">[Ready] FB Post Deleter Pro (Rahul Scripts) active.</div>
             </div>
           </div>
 
@@ -1319,7 +1379,7 @@
           <div style="display: flex; align-items: center; gap: 6px;">
             <div style="width: 18px; height: 18px; border-radius: 50%; background: #10b981; color: #000; font-weight: 900; font-size: 9px; display: flex; align-items: center; justify-content: center;">RS</div>
             <span id="fb-min-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
-            <span id="fb-min-text" style="font-weight: 700; color: #f8fafc; font-size: 10.5px;">Rahul Scripts | Ready</span>
+            <span id="fb-min-text" style="font-weight: 700; color: #f8fafc; font-size: 10.5px;">FB Post Deleter | Ready</span>
           </div>
           <span style="color: #34d399; font-weight: 700; font-size: 10px; margin-left: 8px;">↗ Expand</span>
         </div>
@@ -1502,7 +1562,7 @@
       const color = this.isPaused ? '#f59e0b' : (this.isDeleting ? '#ef4444' : '#10b981');
       if (dotEl) dotEl.style.background = color;
       if (minDot) minDot.style.background = color;
-      if (minText) minText.textContent = `Rahul Scripts | ${this.isPaused ? 'Paused' : (this.isDeleting ? 'Deleting' : 'Ready')} | ${current}/${total}`;
+      if (minText) minText.textContent = `FB Post Deleter | ${this.isPaused ? 'Paused' : (this.isDeleting ? 'Deleting' : 'Ready')} | ${current}/${total}`;
 
       this.syncWarningUI();
       this.syncModeUI();
