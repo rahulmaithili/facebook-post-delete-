@@ -20,6 +20,7 @@
 
   const STORAGE_SESSION_KEY = 'fb_deleter_session';
   const STORAGE_WARNING_KEY = 'fb_ai_give_warning';
+  const STORAGE_MODE_KEY = 'fb_ai_active_mode';
 
   /**
    * Safe Console / Logger Utility
@@ -57,18 +58,32 @@
   class FacebookPostAdapter {
     constructor() {
       this.processedPostKeys = new Set();
+      this.activeMode = 'AUTO'; // 'AUTO' | 'PAGE' | 'GROUP'
     }
 
     /**
      * Detects current Facebook context: GROUP, PAGE, or PROFILE
+     * Respects user-chosen activeMode if explicitly set to 'PAGE' or 'GROUP'.
      */
     detectContext() {
+      if (this.activeMode === 'PAGE') return 'PAGE';
+      if (this.activeMode === 'GROUP') return 'GROUP';
+
       const url = window.location.href;
       if (url.includes('/groups/')) return 'GROUP';
-      if (url.includes('/pages/') || (typeof FBDetector !== 'undefined' && FBDetector.isPageUrl && FBDetector.isPageUrl(url))) {
+      
+      const bodyText = (document.body ? document.body.innerText : '') || '';
+      if (
+        url.includes('/pages/') ||
+        document.querySelector('div[aria-label*="Manage Page"]') ||
+        bodyText.includes('Manage Page') ||
+        bodyText.includes('Professional dashboard') ||
+        bodyText.includes('Meta Business Suite') ||
+        (typeof FBDetector !== 'undefined' && FBDetector.isPageUrl && FBDetector.isPageUrl(url))
+      ) {
         return 'PAGE';
       }
-      return 'PROFILE';
+      return 'PAGE'; // Default to PAGE if not in a group
     }
 
     /**
@@ -234,50 +249,76 @@
 
     /**
      * Search ONLY inside the currently opened menu layer for Remove/Delete actions
+     * Accurately distinguishes between Page ("Move to bin") and Group ("Remove post").
      */
     findRemoveAction(menuLayer) {
       if (!menuLayer) return null;
 
-      const items = Array.from(menuLayer.querySelectorAll('div[role="menuitem"], span, div[role="button"]'));
+      const items = Array.from(menuLayer.querySelectorAll('div[role="menuitem"], div[role="button"], [role="menuitem"]'));
+      const searchItems = items.length > 0 ? items : Array.from(menuLayer.querySelectorAll('div, span, a'));
       const context = this.detectContext();
 
-      // Pass 1: Exact matches for "Remove post" / Hindi equivalents
-      for (const item of items) {
+      // Priority 1: PAGE mode or detected Page -> prioritize "Move to bin" / "Move to trash"
+      if (context === 'PAGE' || context === 'PROFILE') {
+        for (const item of searchItems) {
+          const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+          // Never click "Move to archive" which is located right above "Move to bin"
+          if (text.includes('archive') || text.includes('आर्काइव')) continue;
+
+          if (
+            text.startsWith('move to bin') ||
+            text.startsWith('move to trash') ||
+            text.includes('move to bin') ||
+            text.includes('move to trash') ||
+            text.includes('bin are deleted') ||
+            text.includes('trash are deleted') ||
+            text.includes('ट्रैश में डालें') ||
+            text.includes('बिन में ले जाएं')
+          ) {
+            FBLog.log('REMOVE_OPTION_FOUND', `Found Page Move to bin item: "${text.substring(0, 35)}"`);
+            return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
+          }
+        }
+      }
+
+      // Priority 2: GROUP mode -> look for "Remove post" / "Delete post"
+      if (context === 'GROUP') {
+        for (const item of searchItems) {
+          const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+          if (text.includes('ban')) continue;
+
+          if (
+            text === 'remove post' ||
+            text === 'delete post' ||
+            text.includes('remove post') ||
+            text.includes('delete post') ||
+            text.includes('पोस्ट हटाएं') ||
+            text.includes('ग्रुप से हटाएं')
+          ) {
+            FBLog.log('REMOVE_OPTION_FOUND', `Found Group removal item: "${text.substring(0, 35)}"`);
+            return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
+          }
+        }
+      }
+
+      // Priority 3: General fallback across all Facebook layouts
+      for (const item of searchItems) {
         const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (text.includes('archive') || text.includes('ban')) continue;
+
         if (
-          text === 'remove post' ||
-          text === 'delete post' ||
-          text === 'move to trash' ||
-          text === 'move to bin' ||
-          text === 'पोस्ट हटाएं' ||
-          text === 'ग्रुप से हटाएं' ||
-          text === 'ट्रैश में डालें'
+          text.includes('move to bin') ||
+          text.includes('move to trash') ||
+          text.includes('remove post') ||
+          text.includes('delete post') ||
+          text.includes('bin are deleted') ||
+          text === 'delete' ||
+          text === 'remove' ||
+          text.includes('हटाएं') ||
+          text.includes('ट्रैश')
         ) {
-          return item;
-        }
-      }
-
-      // Pass 2: Contextual search
-      for (const item of items) {
-        const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
-
-        if (context === 'GROUP') {
-          if (text.includes('remove post') && !text.includes('ban')) {
-            return item;
-          }
-        } else {
-          if (text.includes('trash') || text.includes('bin') || text.includes('delete post') || text === 'delete') {
-            return item;
-          }
-        }
-      }
-
-      // Pass 3: General fallback removal terms
-      const generalTerms = ['remove post', 'delete post', 'move to trash', 'delete', 'remove', 'हटाएं'];
-      for (const item of items) {
-        const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (generalTerms.some(term => text.includes(term)) && !text.includes('ban')) {
-          return item;
+          FBLog.log('REMOVE_OPTION_FOUND', `Found fallback removal item: "${text.substring(0, 35)}"`);
+          return item.closest('[role="menuitem"]') || item.closest('[role="button"]') || item;
         }
       }
 
@@ -290,22 +331,28 @@
     async waitForConfirmationDialog(timeout = TIMEOUTS.DIALOG_DETECT) {
       const startTime = Date.now();
       const deletionKeywords = [
+        'move to your bin',
+        'move to bin',
+        'items in your bin',
+        'bin',
+        'move to trash',
+        'trash',
         'remove post',
         'delete post',
-        'move to trash',
         'which rules did this post violate',
         'rules did this post violate',
         'are you sure',
         'delete',
         'remove',
-        'trash',
         'post will be removed',
         'give a warning',
         'गोपनीयता',
         'सहिष्णु',
         'हटाएं',
         'पुष्टि करें',
-        'नियम'
+        'नियम',
+        'बिन में',
+        'ट्रैश'
       ];
 
       while (Date.now() - startTime < timeout) {
@@ -515,7 +562,7 @@
     async findFinalDeleteButton(dialog) {
       if (!dialog) return null;
 
-      const confirmLabels = ['confirm', 'delete', 'remove', 'move to trash', 'move', 'continue', 'पुष्टि करें', 'हटाएं'];
+      const confirmLabels = ['move', 'move to bin', 'confirm', 'delete', 'remove', 'move to trash', 'continue', 'पुष्टि करें', 'हटाएं'];
       const cancelLabels = ['cancel', 'close', 'back', 'रद्द करें', 'वापस'];
 
       const startTime = Date.now();
@@ -604,6 +651,9 @@
       // User setting: Give warning on deletion (default: false / disabled)
       this.giveWarningOnDelete = false;
 
+      // User setting: Target deletion mode ('AUTO' | 'PAGE' | 'GROUP')
+      this.activeMode = 'AUTO';
+
       // Floating panel reference
       this.panelEl = null;
 
@@ -618,12 +668,17 @@
       if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
 
       try {
-        const stored = await chrome.storage.local.get([STORAGE_SESSION_KEY, STORAGE_WARNING_KEY]);
+        const stored = await chrome.storage.local.get([STORAGE_SESSION_KEY, STORAGE_WARNING_KEY, STORAGE_MODE_KEY]);
         
         // Load Give Warning setting
         if (typeof stored[STORAGE_WARNING_KEY] === 'boolean') {
           this.giveWarningOnDelete = stored[STORAGE_WARNING_KEY];
           FBLog.log('SETTING', `Loaded saved Give Warning setting: ${this.giveWarningOnDelete}`);
+        }
+
+        // Load Active Mode setting
+        if (stored[STORAGE_MODE_KEY]) {
+          this.setActiveMode(stored[STORAGE_MODE_KEY]);
         }
 
         // Check for active session recovery
@@ -638,6 +693,38 @@
         }
       } catch (err) {
         FBLog.warn('STARTUP_RECOVERY', 'Failed reading storage session.', err);
+      }
+    }
+
+    /**
+     * Updates target deletion mode ('AUTO' | 'PAGE' | 'GROUP')
+     */
+    setActiveMode(mode) {
+      this.activeMode = mode || 'AUTO';
+      this.adapter.activeMode = this.activeMode;
+      FBLog.log('MODE_CHANGE', `Active deletion mode set to: ${this.activeMode} (Effective: ${this.adapter.detectContext()})`);
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ [STORAGE_MODE_KEY]: this.activeMode });
+      }
+
+      this.syncModeUI();
+    }
+
+    syncModeUI() {
+      const modeBadge = document.getElementById('fb-panel-mode-badge');
+      const warningRow = document.getElementById('fb-panel-warning-row');
+      const eff = this.adapter.detectContext();
+
+      if (modeBadge) {
+        const isPage = eff === 'PAGE';
+        modeBadge.textContent = this.activeMode === 'AUTO' ? `Auto (${isPage ? 'Page' : 'Group'})` : (this.activeMode === 'PAGE' ? '📄 Page' : '👥 Group');
+        modeBadge.style.background = isPage ? '#0ea5e9' : '#8b5cf6';
+      }
+
+      if (warningRow) {
+        // Warning toggle is only relevant for Group deletion
+        warningRow.style.display = eff === 'GROUP' ? 'flex' : 'none';
       }
     }
 
@@ -808,6 +895,9 @@
 
       if (options && typeof options.giveWarningOnDelete === 'boolean') {
         this.giveWarningOnDelete = options.giveWarningOnDelete;
+      }
+      if (options && options.activeMode) {
+        this.setActiveMode(options.activeMode);
       }
 
       const results = {
@@ -980,18 +1070,24 @@
       const dialog = await this.adapter.waitForConfirmationDialog(TIMEOUTS.DIALOG_DETECT);
 
       if (dialog) {
-        // Step 6: Process Confirmation & Rule Checkboxes (Rule 1, Rule 2, etc.)
-        this.state = 'PROCESSING_CONFIRMATIONS';
-        await this.adapter.processCheckboxes(dialog);
+        const currentContext = this.adapter.detectContext();
 
-        // Step 6.5: Process "Give a warning" toggle switch according to user configuration!
-        const shouldGiveWarning = (options && typeof options.giveWarningOnDelete === 'boolean')
-          ? options.giveWarningOnDelete
-          : this.giveWarningOnDelete;
-        
-        await this.adapter.processWarningToggle(dialog, shouldGiveWarning);
+        // Step 6: For Facebook Groups only -> Process Confirmation & Rule Checkboxes (Rule 1, Rule 2, etc.)
+        if (currentContext === 'GROUP') {
+          this.state = 'PROCESSING_CONFIRMATIONS';
+          await this.adapter.processCheckboxes(dialog);
 
-        // Step 7: Locate enabled final confirmation button
+          // Step 6.5: Process "Give a warning" toggle switch according to user configuration
+          const shouldGiveWarning = (options && typeof options.giveWarningOnDelete === 'boolean')
+            ? options.giveWarningOnDelete
+            : this.giveWarningOnDelete;
+          
+          await this.adapter.processWarningToggle(dialog, shouldGiveWarning);
+        } else {
+          FBLog.log('PAGE_DELETION', 'Facebook Page / Profile active: directly confirming Move to bin without group rules.');
+        }
+
+        // Step 7: Locate enabled final confirmation button ("Move" on Page or "Confirm/Remove" on Group)
         this.state = 'FINAL_DELETE';
         const finalBtn = await this.adapter.findFinalDeleteButton(dialog);
 
@@ -1058,7 +1154,8 @@
         <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255, 255, 255, 0.06); cursor: move; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
           <div style="display: flex; align-items: center; gap: 8px;">
             <span id="fb-deleter-status-dot" style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ef4444;"></span>
-            <strong style="font-size: 13px; font-weight: 700; color: #fff;">FB POST DELETER</strong>
+            <strong style="font-size: 13px; font-weight: 700; color: #fff;">FB DELETER</strong>
+            <button id="fb-panel-mode-badge" title="Click to switch Page / Group mode" style="background: ${this.adapter.detectContext() === 'PAGE' ? '#0ea5e9' : '#8b5cf6'}; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border: none; border-radius: 12px; cursor: pointer;">${this.activeMode === 'AUTO' ? (this.adapter.detectContext() === 'PAGE' ? '📄 Page' : '👥 Group') : (this.activeMode === 'PAGE' ? '📄 Page' : '👥 Group')}</button>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <button id="btnPanelDiag" title="Analyze Current Dialog" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; font-size: 11px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">🔍</button>
@@ -1094,8 +1191,8 @@
             </div>
           </div>
 
-          <!-- User-Requested: Give Warning on Delete Toggle Switch Row -->
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;">
+          <!-- User-Requested: Give Warning on Delete Toggle Switch Row (Visible for Groups) -->
+          <div id="fb-panel-warning-row" style="display: ${this.adapter.detectContext() === 'GROUP' ? 'flex' : 'none'}; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;">
             <div style="display: flex; align-items: center; gap: 6px;">
               <span style="font-size: 12px;">⚠️</span>
               <div>
@@ -1158,6 +1255,16 @@
       if (warningCb) {
         warningCb.onchange = (e) => {
           this.setGiveWarning(e.target.checked);
+        };
+      }
+
+      const modeBadge = panel.querySelector('#fb-panel-mode-badge');
+      if (modeBadge) {
+        modeBadge.onclick = (e) => {
+          e.stopPropagation();
+          const current = this.activeMode;
+          const next = current === 'PAGE' ? 'GROUP' : 'PAGE';
+          this.setActiveMode(next);
         };
       }
 
@@ -1261,6 +1368,7 @@
       if (minText) minText.textContent = `FB Deleter | ${this.isPaused ? 'Paused' : 'Running'} | ${current}/${total}`;
 
       this.syncWarningUI();
+      this.syncModeUI();
     }
 
     destroyFloatingPanel() {
@@ -1334,6 +1442,9 @@
       } else if (request.action === 'SET_WARNING_SETTING') {
         fbActionsInstance.setGiveWarning(request.giveWarning);
         sendResponse({ success: true, giveWarning: fbActionsInstance.giveWarningOnDelete });
+      } else if (request.action === 'SET_TARGET_MODE') {
+        fbActionsInstance.setActiveMode(request.mode);
+        sendResponse({ success: true, mode: fbActionsInstance.activeMode, effectiveContext: fbActionsInstance.adapter.detectContext() });
       } else if (request.action === 'ANALYZE_CURRENT_DIALOG') {
         const diag = fbActionsInstance.analyzeCurrentDialog();
         sendResponse({ success: true, diagnostic: diag });

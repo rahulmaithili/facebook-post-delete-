@@ -88,8 +88,27 @@
         </div>
       </div>
 
+      <!-- Deletion Target Mode Switcher (Page vs Group vs Auto) -->
+      <div class="mode-switcher-card" id="modeSwitcherCard">
+        <div class="mode-switcher-header">
+          <span class="mode-switcher-title">🎯 Deletion Mode:</span>
+          <span class="mode-switcher-hint" id="modeActiveDesc">Auto-Detect</span>
+        </div>
+        <div class="mode-segmented-control">
+          <button type="button" class="mode-btn active" data-mode="AUTO" id="btnModeAuto" title="Automatically detect whether current page is Page or Group">
+            🌐 Auto
+          </button>
+          <button type="button" class="mode-btn" data-mode="PAGE" id="btnModePage" title="Facebook Page / Profile mode (Move to bin ➔ Move)">
+            📄 Page Mode
+          </button>
+          <button type="button" class="mode-btn" data-mode="GROUP" id="btnModeGroup" title="Facebook Group mode (Rules ➔ Warning ➔ Confirm)">
+            👥 Group Mode
+          </button>
+        </div>
+      </div>
+
       <!-- Target Facebook Group Input Card -->
-      <div class="group-target-card">
+      <div class="group-target-card" id="groupTargetCard">
         <div class="card-section-title">
           <span>👥 Facebook Group Target</span>
           <span class="sub-hint">ID or Link</span>

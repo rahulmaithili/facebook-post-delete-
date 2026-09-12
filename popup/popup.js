@@ -81,12 +81,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pillRemoval = document.getElementById('pillRemoval');
   const trainerReportText = document.getElementById('trainerReportText');
 
+  // Deletion Target Mode Elements
+  const modeSwitcherCard = document.getElementById('modeSwitcherCard');
+  const modeActiveDesc = document.getElementById('modeActiveDesc');
+  const btnModeAuto = document.getElementById('btnModeAuto');
+  const btnModePage = document.getElementById('btnModePage');
+  const btnModeGroup = document.getElementById('btnModeGroup');
+  const groupTargetCard = document.getElementById('groupTargetCard');
+  const warningToggleCard = document.getElementById('warningToggleCard');
+
   let activeTabId = null;
   let currentGroupId = null;
   let isScanning = false;
   let scannedPosts = [];
   let selectedIds = new Set();
   let settings = null;
+  let currentActiveMode = 'AUTO';
+  let detectedPageOrGroup = null;
 
   // Check if running in dedicated Window mode (pinned to screen edge)
   const urlParams = new URLSearchParams(window.location.search);
@@ -252,6 +263,77 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Target Deletion Mode Controller (AUTO | PAGE | GROUP)
+  function updateModeUI(mode, detectedType) {
+    currentActiveMode = mode || 'AUTO';
+    if (detectedType) detectedPageOrGroup = detectedType;
+
+    const effType = currentActiveMode === 'AUTO' ? (detectedPageOrGroup || 'AUTO') : currentActiveMode;
+    let descText = 'Auto-Detect';
+    if (currentActiveMode === 'AUTO') {
+      descText = detectedPageOrGroup ? `Auto (${detectedPageOrGroup === 'PAGE' ? 'Page' : 'Group'})` : 'Auto-Detect';
+    } else if (currentActiveMode === 'PAGE') {
+      descText = '📄 Page Mode';
+    } else if (currentActiveMode === 'GROUP') {
+      descText = '👥 Group Mode';
+    }
+
+    if (modeActiveDesc) modeActiveDesc.textContent = descText;
+
+    if (btnModeAuto) btnModeAuto.classList.toggle('active', currentActiveMode === 'AUTO');
+    if (btnModePage) btnModePage.classList.toggle('active', currentActiveMode === 'PAGE');
+    if (btnModeGroup) btnModeGroup.classList.toggle('active', currentActiveMode === 'GROUP');
+
+    // Dynamically adjust visibility of group-specific cards
+    if (groupTargetCard) {
+      groupTargetCard.style.display = currentActiveMode === 'PAGE' ? 'none' : 'flex';
+    }
+    if (warningToggleCard) {
+      const isPageActive = effType === 'PAGE';
+      warningToggleCard.style.display = isPageActive ? 'none' : 'flex';
+    }
+  }
+
+  async function setActiveMode(mode) {
+    currentActiveMode = mode;
+    updateModeUI(mode, detectedPageOrGroup);
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      await chrome.storage.local.set({ fb_ai_active_mode: mode });
+    }
+
+    // Broadcast SET_TARGET_MODE to active Facebook tab
+    const fbTab = await getFacebookTab();
+    if (fbTab) {
+      chrome.tabs.sendMessage(fbTab.id, {
+        action: 'SET_TARGET_MODE',
+        mode: mode
+      });
+    }
+  }
+
+  // Load saved active mode from storage
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['fb_ai_active_mode'], (res) => {
+      if (res && res.fb_ai_active_mode) {
+        updateModeUI(res.fb_ai_active_mode);
+      } else {
+        updateModeUI('AUTO');
+      }
+    });
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes['fb_ai_active_mode']) {
+        updateModeUI(changes['fb_ai_active_mode'].newValue);
+      }
+    });
+  }
+
+  // Attach button click listeners
+  if (btnModeAuto) btnModeAuto.addEventListener('click', () => setActiveMode('AUTO'));
+  if (btnModePage) btnModePage.addEventListener('click', () => setActiveMode('PAGE'));
+  if (btnModeGroup) btnModeGroup.addEventListener('click', () => setActiveMode('GROUP'));
+
   // Load existing posts from storage
   async function loadExistingPosts() {
     scannedPosts = await StorageManager.getPosts();
@@ -377,6 +459,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       contextTitle.textContent = ctx.name || 'Facebook';
 
       if (ctx.type === 'GROUP') {
+        detectedPageOrGroup = 'GROUP';
         typeBadge.textContent = 'FB Group';
         typeBadge.className = 'badge group-badge';
         if (ctx.id) {
@@ -389,12 +472,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
         }
       } else if (ctx.type === 'PAGE') {
+        detectedPageOrGroup = 'PAGE';
         typeBadge.textContent = 'FB Page';
         typeBadge.className = 'badge page-badge';
       } else {
+        detectedPageOrGroup = null;
         typeBadge.textContent = ctx.type || 'FB Feed';
         typeBadge.className = 'badge';
       }
+
+      updateModeUI(currentActiveMode, detectedPageOrGroup);
 
       if (ctx.isAdmin) {
         adminBadge.textContent = 'Admin / Manager';
@@ -956,7 +1043,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const giveWarning = cbGiveWarning ? cbGiveWarning.checked : Boolean(settings?.giveWarningOnDelete);
     const deleteOptions = {
       deleteBatchDelay: settings.deleteBatchDelay,
-      giveWarningOnDelete: giveWarning
+      giveWarningOnDelete: giveWarning,
+      activeMode: currentActiveMode
     };
 
     chrome.runtime.sendMessage({

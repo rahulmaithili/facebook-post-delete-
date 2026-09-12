@@ -65,15 +65,27 @@ var FBDetector = window.FBDetector || {
    * Check if current page URL corresponds to a Facebook Page profile
    */
   isPageUrl(url) {
-    const excludedPaths = ['watch', 'marketplace', 'gaming', 'events', 'bookmarks', 'messages', 'notifications', 'friends', 'saved'];
-    const path = new URL(url).pathname.split('/')[1] || '';
-    if (!path || excludedPaths.includes(path.toLowerCase())) return false;
-    // Look for page action signals like "Manage", "Meta Business Suite", "Professional dashboard"
-    return Boolean(
-      document.querySelector('a[href*="/professional_dashboard"]') ||
-      document.querySelector('span:has-text("Manage Page")') ||
-      document.querySelector('div[aria-label*="Manage"]')
-    );
+    try {
+      const excludedPaths = ['watch', 'marketplace', 'gaming', 'events', 'bookmarks', 'messages', 'notifications', 'friends', 'saved', 'groups'];
+      const path = new URL(url).pathname.split('/')[1] || '';
+      if (!path || excludedPaths.includes(path.toLowerCase())) return false;
+
+      // Check text signals on page: "Manage Page", "Professional dashboard", "Meta Business Suite"
+      const bodyText = (document.body ? document.body.innerText : '') || '';
+      if (bodyText.includes('Manage Page') || bodyText.includes('Professional dashboard') || bodyText.includes('पेज प्रबंधित करें')) {
+        return true;
+      }
+
+      // Look for page action signals in DOM
+      return Boolean(
+        document.querySelector('a[href*="/professional_dashboard"]') ||
+        document.querySelector('a[href*="business.facebook.com"]') ||
+        document.querySelector('div[aria-label*="Manage Page"]') ||
+        document.querySelector('div[aria-label*="Manage"]')
+      );
+    } catch (e) {
+      return false;
+    }
   },
 
   /**
