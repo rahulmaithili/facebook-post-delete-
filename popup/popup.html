@@ -146,6 +146,20 @@
 
       <!-- Primary Action Buttons -->
       <div class="action-buttons">
+        <!-- User-Selected Scan Batch Target (50 or 100 posts) -->
+        <div class="scan-limit-row">
+          <div class="scan-limit-info">
+            <span class="scan-limit-icon">🎯</span>
+            <span class="scan-limit-label">Batch Target:</span>
+          </div>
+          <select id="selScanLimit" class="scan-limit-select" title="Choose how many posts to scan in one go (e.g. 50 or 100)">
+            <option value="50" selected>50 Posts</option>
+            <option value="100">100 Posts</option>
+            <option value="25">25 Posts</option>
+            <option value="200">200 Posts</option>
+          </select>
+        </div>
+
         <div class="scan-btn-group">
           <button id="btnInstantScan" class="btn btn-primary btn-half" title="Directly grab all posts currently on screen (Ultra Fast, 0 wait)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

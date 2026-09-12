@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnPopupDelete = document.getElementById('btnPopupDelete');
   const popupSelCount = document.getElementById('popupSelCount');
   const cbGiveWarning = document.getElementById('cbGiveWarning');
+  const selScanLimit = document.getElementById('selScanLimit');
 
   // Deletion Progress & Controls
   const popupDeleteProgressSection = document.getElementById('popupDeleteProgressSection');
@@ -232,6 +233,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
     }
+  }
+
+  // Initialize scan limit selector (Default to 50, user-changeable to 100, 25, 200)
+  if (selScanLimit) {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['fb_ai_scan_target_limit'], (res) => {
+        if (res && res.fb_ai_scan_target_limit) {
+          selScanLimit.value = String(res.fb_ai_scan_target_limit);
+        }
+      });
+    }
+    selScanLimit.addEventListener('change', () => {
+      const val = parseInt(selScanLimit.value, 10) || 50;
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ fb_ai_scan_target_limit: val });
+      }
+    });
   }
 
   // Load existing posts from storage
@@ -593,7 +611,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    popupPostsList.innerHTML = scannedPosts.slice(0, 100).map(post => {
+    popupPostsList.innerHTML = scannedPosts.map(post => {
       const isSelected = selectedIds.has(post.id);
       const rec = post.recommendation || 'PENDING';
       const recClass = rec === 'KEEP' ? 'rec-keep' : (rec === 'DELETE' ? 'rec-delete' : 'rec-review');
@@ -743,17 +761,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnQuickScan.disabled = true;
     btnInstantScan.disabled = true;
 
+    const targetLimit = selScanLimit ? (parseInt(selScanLimit.value, 10) || 50) : 50;
+
     popupProgressSection.style.display = 'flex';
     popupResultsSection.style.display = 'flex';
-    popupProgressText.textContent = 'Scanning timeline...';
-    popupProgressCount.textContent = '0 posts';
+    popupProgressText.textContent = `Deep Scanning (Target: ${targetLimit} posts)...`;
+    popupProgressCount.textContent = `0 / ${targetLimit}`;
     popupProgressFill.style.width = '0%';
 
     await ensureContentScriptsInjected(fbTab.id);
 
     const scanOptions = {
-      scanLimit: (settings && settings.scanLimit) || 250,
-      scanDelay: 500 // Fast scroll delay
+      scanLimit: targetLimit,
+      scanDelay: 800 // Paced scrolling allowing FB network to load older posts
     };
 
     chrome.runtime.sendMessage({

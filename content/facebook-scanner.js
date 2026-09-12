@@ -24,8 +24,8 @@ if (typeof window.FBScannerClass === 'undefined') {
     this.isPaused = false;
     this.scannedPosts.clear();
     this.consecutiveEmptyScrolls = 0;
-    this.scanLimit = options.scanLimit || 500;
-    this.scanDelay = options.scanDelay || 500; // Fast pacing
+    this.scanLimit = options.scanLimit || 50;
+    this.scanDelay = options.scanDelay || 800; // Human & network paced
 
     this.emitProgress('SCAN_STARTED', { count: 0, limit: this.scanLimit });
 
@@ -43,7 +43,7 @@ if (typeof window.FBScannerClass === 'undefined') {
       this.isScanning = false;
       this.emitProgress('SCAN_COMPLETED', {
         count: initialCount,
-        reason: 'Direct instant scan complete',
+        reason: 'Target limit reached',
         posts: Array.from(this.scannedPosts.values())
       });
       return;
@@ -55,20 +55,28 @@ if (typeof window.FBScannerClass === 'undefined') {
         continue;
       }
 
-      // Fast scroll down
-      await this.scrollStep();
-
       const prevCount = this.scannedPosts.size;
+      const isStuck = this.consecutiveEmptyScrolls >= 2;
+
+      // Dynamic Facebook infinite feed scroll step
+      await this.scrollStep(isStuck);
+
+      // Extract new posts rendered in DOM
       this.extractVisiblePosts();
       const newCount = this.scannedPosts.size;
 
-      this.emitProgress('SCAN_PROGRESS', {
-        count: newCount,
-        limit: this.scanLimit,
-        latestPosts: Array.from(this.scannedPosts.values()).slice(-10)
-      });
+      if (newCount > prevCount) {
+        this.consecutiveEmptyScrolls = 0;
+        this.emitProgress('SCAN_PROGRESS', {
+          count: newCount,
+          limit: this.scanLimit,
+          latestPosts: Array.from(this.scannedPosts.values()).slice(-15)
+        });
+      } else {
+        this.consecutiveEmptyScrolls++;
+      }
 
-      // Check scan limit
+      // Check scan limit (e.g. 50 or 100 posts reached!)
       if (newCount >= this.scanLimit) {
         this.emitProgress('SCAN_COMPLETED', {
           count: newCount,
@@ -78,14 +86,14 @@ if (typeof window.FBScannerClass === 'undefined') {
         break;
       }
 
-      // Check if new posts were discovered
-      if (newCount === prevCount) {
-        this.consecutiveEmptyScrolls++;
-        if (this.consecutiveEmptyScrolls >= 8) {
-          break;
-        }
-      } else {
-        this.consecutiveEmptyScrolls = 0;
+      // Allow up to 18 attempts (gives Facebook ~25-30s to fetch & load older posts from network)
+      if (this.consecutiveEmptyScrolls >= 18) {
+        this.emitProgress('SCAN_COMPLETED', {
+          count: newCount,
+          reason: 'End of timeline reached',
+          posts: Array.from(this.scannedPosts.values())
+        });
+        break;
       }
     }
 
@@ -131,26 +139,54 @@ if (typeof window.FBScannerClass === 'undefined') {
   }
 
   /**
-   * Fast scroll increment
+   * Facebook Infinite Feed Scroll Increment
+   * Automatically triggers Facebook's GraphQL IntersectionObserver sentinel.
    */
-  async scrollStep() {
-    const scrollAmount = Math.floor(window.innerHeight * 0.85);
+  async scrollStep(isStuck = false) {
+    const feed = document.querySelector('[role="feed"], div[data-pagelet*="GroupFeed"], div[data-pagelet*="Feed"], div[role="main"]');
+    const articles = Array.from(document.querySelectorAll('div[role="feed"] > div, div[role="article"]'));
 
-    // 1. Scroll window and document
-    window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
-    if (document.documentElement) document.documentElement.scrollTop += scrollAmount;
-    if (document.body) document.body.scrollTop += scrollAmount;
-
-    // 2. Scroll any scrollable feed containers
-    const feedScrollables = document.querySelectorAll('[role="feed"], [role="main"], div[data-pagelet*="GroupFeed"], #pagelet_group_mall');
-    for (const el of feedScrollables) {
-      if (el.scrollHeight > el.clientHeight) {
-        el.scrollTop += scrollAmount;
-      }
+    // 1. Scroll the very last article or child into view so Facebook triggers loader
+    if (articles.length > 0) {
+      const lastArticle = articles[articles.length - 1];
+      try {
+        lastArticle.scrollIntoView({ behavior: 'instant', block: 'end' });
+      } catch (e) {}
+    } else if (feed && feed.lastElementChild) {
+      try {
+        feed.lastElementChild.scrollIntoView({ behavior: 'instant', block: 'end' });
+      } catch (e) {}
     }
 
-    const jitter = Math.floor(Math.random() * 150);
-    await new Promise(r => setTimeout(r, Math.max(600, this.scanDelay) + jitter));
+    // 2. Scroll window to document bottom
+    const docHeight = Math.max(
+      document.body ? document.body.scrollHeight : 0,
+      document.documentElement ? document.documentElement.scrollHeight : 0,
+      window.scrollY + window.innerHeight
+    );
+
+    if (isStuck) {
+      // Jiggle: scroll up slightly, then jump back to bottom to re-activate Facebook IntersectionObserver
+      window.scrollTo(0, Math.max(0, docHeight - 450));
+      await new Promise(r => setTimeout(r, 120));
+      window.scrollTo(0, docHeight + 800);
+    } else {
+      window.scrollTo(0, docHeight + 400);
+    }
+
+    // 3. Scroll feed container if it has internal scrollbar
+    if (feed && feed.scrollHeight > feed.clientHeight) {
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    // 4. Dispatch synthetic scroll & wheel events to wake Facebook's listeners
+    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true }));
+
+    // 5. Adaptive network delay
+    const spinner = document.querySelector('[role="progressbar"], div[role="feed"] svg circle, div[role="feed"] [aria-label*="loading" i]');
+    const delay = spinner ? 1800 : (isStuck ? 1400 : Math.max(800, this.scanDelay));
+    await new Promise(r => setTimeout(r, delay));
   }
 
   /**
@@ -173,7 +209,7 @@ if (typeof window.FBScannerClass === 'undefined') {
     }
 
     // 2. All role="article" elements
-    const articles = document.querySelectorAll('div[role="article"], div[data-pagelet^="FeedUnit"], div[data-ad-preview="message"]');
+    const articles = document.querySelectorAll('div[role="article"], div[data-pagelet^="FeedUnit"], div[data-ad-preview="message"], div[aria-posinset]');
     articles.forEach(el => candidateNodes.add(el));
 
     // 3. Fallback from FBDOM
@@ -262,24 +298,24 @@ if (typeof window.FBScannerClass === 'undefined') {
       : rawUrl.split('?')[0];
 
     let postId = FBDOM.extractPostId(cleanUrl, postEl);
-    if (!postId && actionMenuAria) {
-      // Create a deterministic hash from action menu aria label so it can be re-located reliably
-      let hash = 0;
-      for (let i = 0; i < actionMenuAria.length; i++) {
-        hash = ((hash << 5) - hash) + actionMenuAria.charCodeAt(i);
-        hash |= 0;
+    if (!postId) {
+      // Create a collision-free deterministic seed from URL, post text, media, and action attributes
+      const mediaEl = postEl.querySelector('img:not([alt*="profile photo" i]), video');
+      const mediaSrc = mediaEl ? (mediaEl.src || mediaEl.getAttribute('poster') || '') : '';
+      const textSample = (postEl.textContent || '').replace(/\s+/g, ' ').substring(0, 120).trim();
+
+      const seed = `${cleanUrl}|${textSample}|${mediaSrc.slice(-35)}|${actionMenuAria}`;
+      if (seed.replace(/\|/g, '').length > 5) {
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) {
+          hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+          hash |= 0;
+        }
+        postId = 'fb_post_' + Math.abs(hash);
       }
-      postId = 'fb_post_' + Math.abs(hash);
     }
     if (!postId) {
-      // Deterministic hash based on post text snippet
-      const sampleText = (postEl.textContent || '').substring(0, 50).trim();
-      let hash = 0;
-      for (let i = 0; i < sampleText.length; i++) {
-        hash = ((hash << 5) - hash) + sampleText.charCodeAt(i);
-        hash |= 0;
-      }
-      postId = 'fb_post_' + Math.abs(hash);
+      postId = 'fb_post_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     }
     
     // Tag the DOM node with unique post manager ID so actions can locate it instantly!

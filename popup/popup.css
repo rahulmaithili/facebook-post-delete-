@@ -640,6 +640,51 @@ body.window-mode {
   gap: 8px;
 }
 
+/* Scan Batch Limit Selector */
+.scan-limit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: 2px;
+}
+
+.scan-limit-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scan-limit-icon {
+  font-size: 13px;
+}
+
+.scan-limit-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.scan-limit-select {
+  background: var(--bg-tertiary);
+  color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.scan-limit-select:focus {
+  border-color: var(--accent-blue);
+}
+
 .scan-btn-group, .secondary-btn-group {
   display: flex;
   gap: 8px;

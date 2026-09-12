@@ -829,6 +829,12 @@
       this.ensureFloatingPanel();
       this.updateFloatingPanelUI('Initializing deletion engine...');
 
+      // Reposition to top of timeline to process posts sequentially from top down
+      try {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        await new Promise(r => setTimeout(r, 500));
+      } catch (e) {}
+
       let postQueue = [...postsToDelete];
       let currentIndex = 0;
 
@@ -862,16 +868,25 @@
         if (!postContainerEl) {
           FBLog.log('SCANNING', 'No unprocessed post visible in viewport. Scrolling down...');
           this.updateFloatingPanelUI('Scrolling to load more posts...');
-          window.scrollBy({ top: 450, behavior: 'smooth' });
-          await new Promise(r => setTimeout(r, 1200));
 
-          const refreshed = this.adapter.findPostContainers().filter(c => !c.isProcessed);
-          if (refreshed.length === 0) {
-            FBLog.warn('SCANNING', 'No further posts found after scroll. Concluding.');
+          let foundRefreshed = false;
+          for (let scrollAttempt = 0; scrollAttempt < 4; scrollAttempt++) {
+            window.scrollBy({ top: 600, behavior: 'instant' });
+            await new Promise(r => setTimeout(r, 800));
+
+            const refreshed = this.adapter.findPostContainers().filter(c => !c.isProcessed);
+            if (refreshed.length > 0) {
+              postContainerEl = refreshed[0].element;
+              targetPost = { id: refreshed[0].postKey, postKey: refreshed[0].postKey };
+              foundRefreshed = true;
+              break;
+            }
+          }
+
+          if (!foundRefreshed) {
+            FBLog.warn('SCANNING', 'No further posts found after multiple scrolls. Concluding.');
             break;
           }
-          postContainerEl = refreshed[0].element;
-          targetPost = { id: refreshed[0].postKey, postKey: refreshed[0].postKey };
         }
 
         const postKey = targetPost.postKey || targetPost.id;
