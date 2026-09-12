@@ -1267,17 +1267,19 @@
         user-select: none !important;
       `;
 
+      const logoUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+        ? chrome.runtime.getURL('icons/icon48.png')
+        : '';
+
       panel.innerHTML = `
         <!-- Header (Draggable Handle with Rahul Scripts Branding) -->
-        <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: linear-gradient(135deg, #091322, #0f1f38); cursor: move; border-bottom: 1px solid rgba(16, 185, 129, 0.25);">
+        <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: linear-gradient(135deg, #091322, #0f1f38); cursor: move; border-bottom: 1px solid rgba(14, 165, 233, 0.35);">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <!-- RS Circle Badge -->
-            <div style="width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #059669, #10b981); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 11px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.5); border: 1px solid rgba(255,255,255,0.25); flex-shrink: 0;">
-              RS
-            </div>
+            <!-- Official RS Monogram Logo Icon -->
+            <img src="${logoUrl}" alt="RS" style="width: 26px; height: 26px; border-radius: 6px; object-fit: contain; box-shadow: 0 0 10px rgba(14, 165, 233, 0.6); border: 1px solid rgba(56, 189, 248, 0.4); flex-shrink: 0;" />
             <div>
               <div style="font-size: 12px; font-weight: 800; color: #fff; line-height: 1.1; letter-spacing: 0.3px;">FB Post Deleter Pro</div>
-              <div style="font-size: 8.5px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px;">BY RAHUL SCRIPTS • AUTOMATION</div>
+              <div style="font-size: 8.5px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">BY RAHUL SCRIPTS • AUTOMATION</div>
             </div>
           </div>
           <div style="display: flex; align-items: center; gap: 5px;">
@@ -1370,18 +1372,18 @@
           <!-- Footer with Rahul Scripts Copyright -->
           <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, 0.08); font-size: 9px; color: #64748b;">
             <span>© 2026 <strong style="color: #94a3b8;">Rahul Scripts</strong> • All Rights Reserved</span>
-            <span style="color: #34d399; font-weight: 700;">PRO ENGINE</span>
+            <span style="color: #38bdf8; font-weight: 700;">PRO ENGINE</span>
           </div>
         </div>
 
         <!-- Compact Minimized Pill Bar -->
-        <div id="fb-deleter-minimized-pill" style="display: none; padding: 6px 12px; align-items: center; justify-content: space-between; font-size: 11px; cursor: pointer; background: #0f172a; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.5); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+        <div id="fb-deleter-minimized-pill" style="display: none; padding: 6px 12px; align-items: center; justify-content: space-between; font-size: 11px; cursor: pointer; background: #0f172a; border-radius: 20px; border: 1px solid rgba(14, 165, 233, 0.5); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
           <div style="display: flex; align-items: center; gap: 6px;">
-            <div style="width: 18px; height: 18px; border-radius: 50%; background: #10b981; color: #000; font-weight: 900; font-size: 9px; display: flex; align-items: center; justify-content: center;">RS</div>
+            <img src="${logoUrl}" alt="RS" style="width: 18px; height: 18px; border-radius: 4px; object-fit: contain; flex-shrink: 0;" />
             <span id="fb-min-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
             <span id="fb-min-text" style="font-weight: 700; color: #f8fafc; font-size: 10.5px;">FB Post Deleter | Ready</span>
           </div>
-          <span style="color: #34d399; font-weight: 700; font-size: 10px; margin-left: 8px;">↗ Expand</span>
+          <span style="color: #38bdf8; font-weight: 700; font-size: 10px; margin-left: 8px;">↗ Expand</span>
         </div>
       `;
 
