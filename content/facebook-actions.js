@@ -984,6 +984,7 @@
 
         this.updateFloatingPanelUI(`Processing post ${results.processed} of ${results.total || '...'}`);
         this.emitProgress(results.processed, results.total, results, `Processing post ${results.processed}...`);
+        this.addActivityLog(`Targeting post #${results.processed}...`, 'info');
 
         try {
           const outcome = await this.deleteSinglePostVerified(targetPost, postContainerEl, options);
@@ -992,18 +993,22 @@
             results.successful++;
             this.adapter.processedPostKeys.add(postKey);
             results.details.push({ id: postKey, status: 'SUCCESS', message: outcome.message });
+            this.addActivityLog(`Post #${results.processed}: Deleted successfully ✅`, 'success');
           } else if (outcome.status === 'SKIPPED') {
             results.skipped++;
             this.adapter.processedPostKeys.add(postKey);
             results.details.push({ id: postKey, status: 'SKIPPED', message: outcome.reason });
+            this.addActivityLog(`Post #${results.processed}: Skipped (${outcome.reason || 'Not matched'}) ⚠️`, 'warning');
           } else {
             results.failed++;
             results.details.push({ id: postKey, status: 'FAILED', message: outcome.reason });
+            this.addActivityLog(`Post #${results.processed}: Failed (${outcome.reason || 'Unknown'}) ❌`, 'error');
           }
         } catch (err) {
           results.failed++;
           results.details.push({ id: postKey, status: 'FAILED', message: err.message });
           FBLog.error('DELETE_STEP', `Error on post ${postKey}: ${err.message}`);
+          this.addActivityLog(`Post #${results.processed} Error: ${err.message} ❌`, 'error');
 
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
         }
@@ -1063,6 +1068,7 @@
       }
 
       FBLog.log('REMOVE_OPTION_FOUND', `Clicking removal action: "${(removeAction.textContent || '').trim()}"`);
+      this.addActivityLog(`Action found: "${(removeAction.textContent || '').trim()}". Clicking...`, 'info');
       FBDOM.dispatchFullClick(removeAction);
 
       // Wait for confirmation dialog (DYNAMIC MODAL DETECTION)
@@ -1075,6 +1081,7 @@
         // Step 6: For Facebook Groups only -> Process Confirmation & Rule Checkboxes (Rule 1, Rule 2, etc.)
         if (currentContext === 'GROUP') {
           this.state = 'PROCESSING_CONFIRMATIONS';
+          this.addActivityLog('Group detected: Processing rule checkboxes...', 'info');
           await this.adapter.processCheckboxes(dialog);
 
           // Step 6.5: Process "Give a warning" toggle switch according to user configuration
@@ -1085,6 +1092,7 @@
           await this.adapter.processWarningToggle(dialog, shouldGiveWarning);
         } else {
           FBLog.log('PAGE_DELETION', 'Facebook Page / Profile active: directly confirming Move to bin without group rules.');
+          this.addActivityLog('Page detected: Confirming "Move to bin"...', 'info');
         }
 
         // Step 7: Locate enabled final confirmation button ("Move" on Page or "Confirm/Remove" on Group)
@@ -1096,6 +1104,7 @@
         }
 
         FBLog.log('FINAL_DELETE', 'Clicking final confirmation button...');
+        this.addActivityLog(`Clicking confirmation button "${(finalBtn.textContent || '').trim()}"...`, 'info');
         FBDOM.dispatchFullClick(finalBtn);
 
         // Step 8: Verify Deletion
@@ -1120,12 +1129,61 @@
      * Includes real-time "Give a warning" toggle switch directly on screen!
      * =========================================================================
      */
+    /**
+     * Add real-time log to the floating panel console and broadcast to extension
+     */
+    addActivityLog(message, type = 'info') {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      FBLog.log('ACTIVITY', `[${timeStr}] ${message}`);
+
+      if (this.panelEl) {
+        const logBox = this.panelEl.querySelector('#fb-activity-log-box');
+        if (logBox) {
+          const line = document.createElement('div');
+          let color = '#94a3b8';
+          if (type === 'success') color = '#34d399';
+          else if (type === 'error') color = '#f87171';
+          else if (type === 'warning') color = '#fbbf24';
+          else if (type === 'highlight') color = '#38bdf8';
+
+          line.style.cssText = `color: ${color} !important; margin-bottom: 2px !important; word-break: break-word !important;`;
+          line.textContent = `[${timeStr}] ${message}`;
+          logBox.appendChild(line);
+
+          while (logBox.children.length > 120) {
+            logBox.removeChild(logBox.firstChild);
+          }
+          logBox.scrollTop = logBox.scrollHeight;
+        }
+      }
+
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          chrome.runtime.sendMessage({
+            action: 'ACTIVITY_LOG_ENTRY',
+            data: { timestamp: timeStr, message, type }
+          });
+        } catch (e) {}
+      }
+    }
+
+    /**
+     * =========================================================================
+     * Rahul Scripts - On-Screen Floating Control & Live Progress Widget
+     * Features RS branding, 4-box metrics, 3-action buttons, and Activity Log!
+     * =========================================================================
+     */
     ensureFloatingPanel() {
-      if (this.panelEl && document.body.contains(this.panelEl)) return;
+      if (this.panelEl && document.body.contains(this.panelEl)) {
+        this.panelEl.style.display = 'block';
+        return;
+      }
 
       const existing = document.getElementById('fb-deleter-floating-panel');
       if (existing) {
         this.panelEl = existing;
+        this.panelEl.style.display = 'block';
         return;
       }
 
@@ -1133,14 +1191,14 @@
       panel.id = 'fb-deleter-floating-panel';
       panel.style.cssText = `
         position: fixed !important;
-        bottom: 24px !important;
-        right: 24px !important;
-        width: 330px !important;
-        background: #18191a !important;
+        bottom: 20px !important;
+        right: 20px !important;
+        width: 340px !important;
+        background: #0f172a !important;
         color: #ffffff !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(16, 185, 129, 0.35) !important;
         border-radius: 12px !important;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75) !important;
+        box-shadow: 0 16px 45px rgba(0, 0, 0, 0.75), 0 0 15px rgba(16, 185, 129, 0.15) !important;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
         z-index: 2147483647 !important;
         padding: 0 !important;
@@ -1150,85 +1208,120 @@
       `;
 
       panel.innerHTML = `
-        <!-- Header (Draggable Handle) -->
-        <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255, 255, 255, 0.06); cursor: move; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+        <!-- Header (Draggable Handle with Rahul Scripts Branding) -->
+        <div id="fb-deleter-header" style="display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: linear-gradient(135deg, #091322, #0f1f38); cursor: move; border-bottom: 1px solid rgba(16, 185, 129, 0.25);">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span id="fb-deleter-status-dot" style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ef4444;"></span>
-            <strong style="font-size: 13px; font-weight: 700; color: #fff;">FB DELETER</strong>
-            <button id="fb-panel-mode-badge" title="Click to switch Page / Group mode" style="background: ${this.adapter.detectContext() === 'PAGE' ? '#0ea5e9' : '#8b5cf6'}; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 7px; border: none; border-radius: 12px; cursor: pointer;">${this.activeMode === 'AUTO' ? (this.adapter.detectContext() === 'PAGE' ? '📄 Page' : '👥 Group') : (this.activeMode === 'PAGE' ? '📄 Page' : '👥 Group')}</button>
+            <!-- RS Circle Badge -->
+            <div style="width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #059669, #10b981); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 11px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.5); border: 1px solid rgba(255,255,255,0.25); flex-shrink: 0;">
+              RS
+            </div>
+            <div>
+              <div style="font-size: 12px; font-weight: 800; color: #fff; line-height: 1.1; letter-spacing: 0.3px;">Rahul Scripts</div>
+              <div style="font-size: 8.5px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px;">AUTOMATION • SOLUTIONS</div>
+            </div>
           </div>
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <button id="btnPanelDiag" title="Analyze Current Dialog" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; font-size: 11px; padding: 2px 6px; border-radius: 4px; cursor: pointer;">🔍</button>
-            <button id="btnPanelMin" title="Minimize" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1; font-size: 12px; padding: 1px 6px; border-radius: 4px; cursor: pointer;">_</button>
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <button id="fb-panel-mode-badge" title="Click to switch Page / Group mode" style="background: ${this.adapter.detectContext() === 'PAGE' ? '#0ea5e9' : '#8b5cf6'}; color: #fff; font-size: 9.5px; font-weight: 800; padding: 2px 7px; border: none; border-radius: 12px; cursor: pointer; text-transform: uppercase;">${this.activeMode === 'AUTO' ? (this.adapter.detectContext() === 'PAGE' ? '📄 Page' : '👥 Group') : (this.activeMode === 'PAGE' ? '📄 Page' : '👥 Group')}</button>
+            <button id="btnPanelDiag" title="Analyze Current Dialog" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); color: #cbd5e1; font-size: 11px; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;">🔍</button>
+            <button id="btnPanelMin" title="Minimize to corner" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); color: #cbd5e1; font-size: 12px; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center;">—</button>
+            <button id="btnPanelClose" title="Close Panel" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-size: 12px; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 700;">✕</button>
           </div>
         </div>
 
         <!-- Body -->
-        <div id="fb-deleter-body" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;">
-          <div style="display: flex; justify-content: space-between; font-size: 12px;">
-            <span id="fb-panel-status-label" style="color: #cbd5e1;">Status: Running</span>
-            <strong id="fb-panel-counter" style="color: #fff;">0 / 0</strong>
+        <div id="fb-deleter-body" style="padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: #0b1322;">
+          <!-- Status Row -->
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11.5px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span id="fb-deleter-status-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981;"></span>
+              <span id="fb-panel-status-label" style="color: #cbd5e1; font-weight: 600;">Status: Ready</span>
+            </div>
+            <strong id="fb-panel-counter" style="color: #fff; font-size: 11.5px;">0 / 0</strong>
           </div>
 
           <!-- Progress Track -->
-          <div style="height: 6px; width: 100%; background: rgba(255, 255, 255, 0.15); border-radius: 3px; overflow: hidden;">
-            <div id="fb-panel-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #ef4444, #f97316); transition: width 0.3s ease;"></div>
+          <div style="height: 5px; width: 100%; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden;">
+            <div id="fb-panel-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #059669); transition: width 0.3s ease;"></div>
           </div>
 
-          <!-- Stats Grid -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; font-size: 11px; text-align: center;">
-            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 4px;">
-              <span style="color: #10b981; font-weight: 700;" id="fb-panel-deleted">0</span>
-              <div style="color: #94a3b8; font-size: 10px;">Deleted</div>
+          <!-- 3-Action Buttons Row (Directly from User Reference) -->
+          <div style="display: flex; gap: 6px;">
+            <button id="btnPanelStart" style="flex: 1.2; background: #059669; color: #fff; font-weight: 700; font-size: 11px; padding: 6px 4px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; box-shadow: 0 2px 6px rgba(5, 150, 105, 0.4);">
+              <span>▶</span> Start Deleting
+            </button>
+            <button id="btnPanelPause" style="flex: 1; background: #f59e0b; color: #000; font-weight: 700; font-size: 11px; padding: 6px 4px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+              <span>⏸</span> Pause
+            </button>
+            <button id="btnPanelResume" style="flex: 1; display: none; background: #10b981; color: #000; font-weight: 700; font-size: 11px; padding: 6px 4px; border: none; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center; gap: 4px;">
+              <span>▶</span> Resume
+            </button>
+            <button id="btnPanelStop" style="flex: 1; background: #ef4444; color: #fff; font-weight: 700; font-size: 11px; padding: 6px 4px; border: none; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+              <span>⏹</span> Stop
+            </button>
+          </div>
+
+          <!-- 4-Box Metric Result Card (Directly from User Reference) -->
+          <div style="background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 7px 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; text-align: center;">
+            <div style="border-right: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="font-size: 15px; font-weight: 800; color: #f8fafc;" id="fb-panel-total">0</div>
+              <div style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">TOTAL</div>
             </div>
-            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 4px;">
-              <span style="color: #ef4444; font-weight: 700;" id="fb-panel-failed">0</span>
-              <div style="color: #94a3b8; font-size: 10px;">Failed</div>
+            <div style="border-right: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="font-size: 15px; font-weight: 800; color: #10b981;" id="fb-panel-deleted">0</div>
+              <div style="font-size: 9px; font-weight: 700; color: #10b981; text-transform: uppercase;">DELETED</div>
             </div>
-            <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 6px; padding: 4px;">
-              <span style="color: #f59e0b; font-weight: 700;" id="fb-panel-skipped">0</span>
-              <div style="color: #94a3b8; font-size: 10px;">Skipped</div>
+            <div style="border-right: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="font-size: 15px; font-weight: 800; color: #ef4444;" id="fb-panel-failed">0</div>
+              <div style="font-size: 9px; font-weight: 700; color: #ef4444; text-transform: uppercase;">FAILED</div>
+            </div>
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #38bdf8;" id="fb-panel-remaining">0</div>
+              <div style="font-size: 9px; font-weight: 700; color: #38bdf8; text-transform: uppercase;">REMAINING</div>
             </div>
           </div>
 
-          <!-- User-Requested: Give Warning on Delete Toggle Switch Row (Visible for Groups) -->
-          <div id="fb-panel-warning-row" style="display: ${this.adapter.detectContext() === 'GROUP' ? 'flex' : 'none'}; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="font-size: 12px;">⚠️</span>
+          <!-- User-Requested: Give Warning Toggle Switch (Groups only) -->
+          <div id="fb-panel-warning-row" style="display: ${this.adapter.detectContext() === 'GROUP' ? 'flex' : 'none'}; align-items: center; justify-content: space-between; padding: 5px 8px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <span style="font-size: 11px;">⚠️</span>
               <div>
-                <div style="font-size: 11px; font-weight: 600; color: #fff;">Give Warning: <span id="fb-panel-warning-status-text" style="color: ${this.giveWarningOnDelete ? '#10b981' : '#94a3b8'};">${this.giveWarningOnDelete ? 'ENABLED' : 'DISABLED'}</span></div>
-                <div style="font-size: 9px; color: #94a3b8;">Facebook modal warning toggle</div>
+                <div style="font-size: 10px; font-weight: 600; color: #fff;">Give Warning: <span id="fb-panel-warning-status-text" style="color: ${this.giveWarningOnDelete ? '#10b981' : '#94a3b8'};">${this.giveWarningOnDelete ? 'ENABLED' : 'DISABLED'}</span></div>
               </div>
             </div>
-            <label style="position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; margin: 0;">
+            <label style="position: relative; display: inline-block; width: 32px; height: 18px; cursor: pointer; margin: 0;">
               <input type="checkbox" id="fb-panel-warning-checkbox" ${this.giveWarningOnDelete ? 'checked' : ''} style="opacity: 0; width: 0; height: 0;">
-              <span id="fb-panel-warning-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${this.giveWarningOnDelete ? '#10b981' : 'rgba(255,255,255,0.2)'}; border-radius: 20px; transition: .25s;">
-                <span id="fb-panel-warning-knob" style="position: absolute; height: 14px; width: 14px; left: ${this.giveWarningOnDelete ? '19px' : '3px'}; bottom: 3px; background-color: white; border-radius: 50%; transition: .25s;"></span>
+              <span id="fb-panel-warning-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${this.giveWarningOnDelete ? '#10b981' : 'rgba(255,255,255,0.2)'}; border-radius: 18px; transition: .25s;">
+                <span id="fb-panel-warning-knob" style="position: absolute; height: 12px; width: 12px; left: ${this.giveWarningOnDelete ? '17px' : '3px'}; bottom: 3px; background-color: white; border-radius: 50%; transition: .25s;"></span>
               </span>
             </label>
           </div>
 
-          <!-- Controls -->
-          <div style="display: flex; gap: 8px; margin-top: 2px;">
-            <button id="btnPanelPause" style="flex: 1; background: #f59e0b; color: #000; font-weight: 700; font-size: 11px; padding: 6px; border: none; border-radius: 6px; cursor: pointer;">
-              ⏸️ PAUSE
-            </button>
-            <button id="btnPanelResume" style="flex: 1; display: none; background: #10b981; color: #000; font-weight: 700; font-size: 11px; padding: 6px; border: none; border-radius: 6px; cursor: pointer;">
-              ▶️ RESUME
-            </button>
-            <button id="btnPanelStop" style="flex: 1; background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); font-weight: 600; font-size: 11px; padding: 6px; border-radius: 6px; cursor: pointer;">
-              ⏹️ STOP
-            </button>
+          <!-- Activity Log Terminal Console (Directly from User Reference) -->
+          <div style="display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: 700; color: #94a3b8;">
+              <span style="display: flex; align-items: center; gap: 4px;"><span style="color: #10b981;">●</span> Activity Log</span>
+              <button id="btnPanelClearLog" style="background: transparent; border: none; color: #38bdf8; font-size: 9.5px; cursor: pointer; text-decoration: underline;">Clear Log</button>
+            </div>
+            <div id="fb-activity-log-box" style="height: 105px; max-height: 105px; overflow-y: auto; background: #060b14; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 5px; padding: 5px 7px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 9.5px; line-height: 1.35; color: #94a3b8; display: flex; flex-direction: column; gap: 2px;">
+              <div style="color: #64748b;">[Ready] Rahul Scripts Automation Engine active.</div>
+            </div>
+          </div>
+
+          <!-- Footer with Rahul Scripts Copyright -->
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, 0.08); font-size: 9px; color: #64748b;">
+            <span>© 2026 <strong style="color: #94a3b8;">Rahul Scripts</strong> • All Rights Reserved</span>
+            <span style="color: #34d399; font-weight: 700;">PRO ENGINE</span>
           </div>
         </div>
 
-        <!-- Compact Minimized Pill (Hidden by default) -->
-        <div id="fb-deleter-minimized-pill" style="display: none; padding: 8px 12px; align-items: center; justify-content: space-between; font-size: 11px; cursor: pointer;">
+        <!-- Compact Minimized Pill Bar -->
+        <div id="fb-deleter-minimized-pill" style="display: none; padding: 6px 12px; align-items: center; justify-content: space-between; font-size: 11px; cursor: pointer; background: #0f172a; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.5); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
           <div style="display: flex; align-items: center; gap: 6px;">
-            <span id="fb-min-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444;"></span>
-            <span id="fb-min-text">FB Deleter | Running</span>
+            <div style="width: 18px; height: 18px; border-radius: 50%; background: #10b981; color: #000; font-weight: 900; font-size: 9px; display: flex; align-items: center; justify-content: center;">RS</div>
+            <span id="fb-min-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981;"></span>
+            <span id="fb-min-text" style="font-weight: 700; color: #f8fafc; font-size: 10.5px;">Rahul Scripts | Ready</span>
           </div>
-          <span style="color: #60a5fa; font-size: 10px; margin-left: 8px;">[Expand]</span>
+          <span style="color: #34d399; font-weight: 700; font-size: 10px; margin-left: 8px;">↗ Expand</span>
         </div>
       `;
 
@@ -1237,21 +1330,20 @@
 
       this.setupDraggable(panel, panel.querySelector('#fb-deleter-header'));
 
+      const btnStart = panel.querySelector('#btnPanelStart');
       const btnPause = panel.querySelector('#btnPanelPause');
       const btnResume = panel.querySelector('#btnPanelResume');
       const btnStop = panel.querySelector('#btnPanelStop');
       const btnMin = panel.querySelector('#btnPanelMin');
+      const btnClose = panel.querySelector('#btnPanelClose');
       const btnDiag = panel.querySelector('#btnPanelDiag');
+      const btnClearLog = panel.querySelector('#btnPanelClearLog');
       const minPill = panel.querySelector('#fb-deleter-minimized-pill');
       const body = panel.querySelector('#fb-deleter-body');
       const header = panel.querySelector('#fb-deleter-header');
 
       // Warning switch event listener
       const warningCb = panel.querySelector('#fb-panel-warning-checkbox');
-      const warningStatusText = panel.querySelector('#fb-panel-warning-status-text');
-      const warningSlider = panel.querySelector('#fb-panel-warning-slider');
-      const warningKnob = panel.querySelector('#fb-panel-warning-knob');
-
       if (warningCb) {
         warningCb.onchange = (e) => {
           this.setGiveWarning(e.target.checked);
@@ -1268,20 +1360,42 @@
         };
       }
 
+      if (btnStart) {
+        btnStart.onclick = async () => {
+          if (this.isDeleting) return;
+          this.addActivityLog('Detecting visible posts on Facebook...', 'info');
+          const containers = this.adapter.findPostContainers();
+          if (containers.length === 0) {
+            this.addActivityLog('No posts detected on screen. Please scroll down.', 'warning');
+            alert('No Facebook posts detected on current screen. Please scroll down your Facebook feed.');
+            return;
+          }
+          const posts = containers.map(c => ({ id: c.postKey, postKey: c.postKey }));
+          this.addActivityLog(`Found ${posts.length} visible posts. Starting deletion...`, 'highlight');
+          this.bulkDeletePosts(posts, {
+            giveWarningOnDelete: this.giveWarningOnDelete,
+            activeMode: this.activeMode
+          });
+        };
+      }
+
       btnPause.onclick = () => {
         this.pause();
         btnPause.style.display = 'none';
-        btnResume.style.display = 'inline-block';
+        btnResume.style.display = 'flex';
+        this.addActivityLog('Deletion paused by user.', 'warning');
       };
 
       btnResume.onclick = () => {
         this.resume();
         btnResume.style.display = 'none';
-        btnPause.style.display = 'inline-block';
+        btnPause.style.display = 'flex';
+        this.addActivityLog('Resuming deletion...', 'highlight');
       };
 
       btnStop.onclick = () => {
         this.stop();
+        this.addActivityLog('Deletion stopped by user.', 'error');
       };
 
       btnMin.onclick = () => {
@@ -1289,14 +1403,33 @@
         header.style.display = 'none';
         minPill.style.display = 'flex';
         panel.style.width = '240px';
+        panel.style.background = 'transparent';
+        panel.style.border = 'none';
+        panel.style.boxShadow = 'none';
       };
 
       minPill.onclick = () => {
         minPill.style.display = 'none';
         header.style.display = 'flex';
         body.style.display = 'flex';
-        panel.style.width = '330px';
+        panel.style.width = '340px';
+        panel.style.background = '#0f172a';
+        panel.style.border = '1px solid rgba(16, 185, 129, 0.35)';
+        panel.style.boxShadow = '0 16px 45px rgba(0, 0, 0, 0.75), 0 0 15px rgba(16, 185, 129, 0.15)';
       };
+
+      if (btnClose) {
+        btnClose.onclick = () => {
+          panel.style.display = 'none';
+        };
+      }
+
+      if (btnClearLog) {
+        btnClearLog.onclick = () => {
+          const logBox = panel.querySelector('#fb-activity-log-box');
+          if (logBox) logBox.innerHTML = '<div style="color: #64748b;">[Cleared] Log cleared by user.</div>';
+        };
+      }
 
       btnDiag.onclick = () => {
         this.analyzeCurrentDialog();
@@ -1306,7 +1439,7 @@
     setupDraggable(panel, handle) {
       let isDragging = false;
       let startX = 0, startY = 0;
-      let initRight = 24, initBottom = 24;
+      let initRight = 20, initBottom = 20;
 
       handle.onmousedown = (e) => {
         if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('label')) return;
@@ -1343,29 +1476,33 @@
       const statusLabel = this.panelEl.querySelector('#fb-panel-status-label');
       const counterEl = this.panelEl.querySelector('#fb-panel-counter');
       const fillEl = this.panelEl.querySelector('#fb-panel-progress-fill');
+      const totalEl = this.panelEl.querySelector('#fb-panel-total');
       const delEl = this.panelEl.querySelector('#fb-panel-deleted');
       const failEl = this.panelEl.querySelector('#fb-panel-failed');
-      const skipEl = this.panelEl.querySelector('#fb-panel-skipped');
+      const remEl = this.panelEl.querySelector('#fb-panel-remaining');
       const dotEl = this.panelEl.querySelector('#fb-deleter-status-dot');
       const minText = this.panelEl.querySelector('#fb-min-text');
       const minDot = this.panelEl.querySelector('#fb-min-dot');
 
-      if (statusLabel) statusLabel.textContent = `Status: ${this.isPaused ? 'Paused' : this.state}`;
-      if (delEl) delEl.textContent = s.deletedCount || 0;
-      if (failEl) failEl.textContent = s.failedCount || 0;
-      if (skipEl) skipEl.textContent = s.skippedCount || 0;
+      if (statusLabel) statusLabel.textContent = `Status: ${this.isPaused ? 'Paused' : (statusText || this.state)}`;
 
       const current = (s.deletedCount || 0) + (s.failedCount || 0) + (s.skippedCount || 0);
       const total = s.totalCount || current;
+      const remaining = Math.max(0, total - current);
       const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+
+      if (totalEl) totalEl.textContent = total;
+      if (delEl) delEl.textContent = s.deletedCount || 0;
+      if (failEl) failEl.textContent = s.failedCount || 0;
+      if (remEl) remEl.textContent = remaining;
 
       if (counterEl) counterEl.textContent = `${current} / ${total}`;
       if (fillEl) fillEl.style.width = `${pct}%`;
 
-      const color = this.isPaused ? '#f59e0b' : '#ef4444';
+      const color = this.isPaused ? '#f59e0b' : (this.isDeleting ? '#ef4444' : '#10b981');
       if (dotEl) dotEl.style.background = color;
       if (minDot) minDot.style.background = color;
-      if (minText) minText.textContent = `FB Deleter | ${this.isPaused ? 'Paused' : 'Running'} | ${current}/${total}`;
+      if (minText) minText.textContent = `Rahul Scripts | ${this.isPaused ? 'Paused' : (this.isDeleting ? 'Deleting' : 'Ready')} | ${current}/${total}`;
 
       this.syncWarningUI();
       this.syncModeUI();
@@ -1448,6 +1585,19 @@
       } else if (request.action === 'ANALYZE_CURRENT_DIALOG') {
         const diag = fbActionsInstance.analyzeCurrentDialog();
         sendResponse({ success: true, diagnostic: diag });
+      } else if (request.action === 'SHOW_FLOATING_PANEL') {
+        fbActionsInstance.ensureFloatingPanel();
+        if (fbActionsInstance.panelEl) {
+          fbActionsInstance.panelEl.style.display = 'block';
+        }
+        sendResponse({ success: true });
+      } else if (request.action === 'TOGGLE_FLOATING_PANEL') {
+        fbActionsInstance.ensureFloatingPanel();
+        if (fbActionsInstance.panelEl) {
+          const isHidden = fbActionsInstance.panelEl.style.display === 'none';
+          fbActionsInstance.panelEl.style.display = isHidden ? 'block' : 'none';
+        }
+        sendResponse({ success: true });
       } else if (request.action === 'GET_AUTOMATION_STATE') {
         sendResponse({
           success: true,

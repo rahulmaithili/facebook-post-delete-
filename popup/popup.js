@@ -14,10 +14,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statScanned = document.getElementById('statScanned');
   const statDelete = document.getElementById('statDelete');
   const statReview = document.getElementById('statReview');
+  const statDeletedCount = document.getElementById('statDeletedCount');
+  const statFailedCount = document.getElementById('statFailedCount');
+  const statRemainingCount = document.getElementById('statRemainingCount');
 
   const btnMinimize = document.getElementById('btnMinimize');
   const btnClosePopup = document.getElementById('btnClosePopup');
   const btnOptions = document.getElementById('btnOptions');
+  const btnToggleSideWidget = document.getElementById('btnToggleSideWidget');
+  const btnClearPopupLog = document.getElementById('btnClearPopupLog');
+  const popupActivityLogTerminal = document.getElementById('popupActivityLogTerminal');
   const popupBodyContent = document.getElementById('popupBodyContent');
 
   const btnInstantScan = document.getElementById('btnInstantScan');
@@ -334,6 +340,48 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnModePage) btnModePage.addEventListener('click', () => setActiveMode('PAGE'));
   if (btnModeGroup) btnModeGroup.addEventListener('click', () => setActiveMode('GROUP'));
 
+  // Activity Log Writer for Popup
+  function addPopupLog(message, type = 'info') {
+    if (!popupActivityLogTerminal) return;
+    const line = document.createElement('div');
+    line.className = `log-line log-${type}`;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    line.textContent = `[${timeStr}] ${message}`;
+    popupActivityLogTerminal.appendChild(line);
+
+    while (popupActivityLogTerminal.children.length > 100) {
+      popupActivityLogTerminal.removeChild(popupActivityLogTerminal.firstChild);
+    }
+    popupActivityLogTerminal.scrollTop = popupActivityLogTerminal.scrollHeight;
+  }
+
+  if (btnClearPopupLog) {
+    btnClearPopupLog.addEventListener('click', () => {
+      if (popupActivityLogTerminal) {
+        popupActivityLogTerminal.innerHTML = '<div class="log-line log-info">[Cleared] Console log cleared.</div>';
+      }
+    });
+  }
+
+  // Toggle On-Screen Floating Widget on Facebook tab
+  if (btnToggleSideWidget) {
+    btnToggleSideWidget.addEventListener('click', async () => {
+      const fbTab = await getFacebookTab();
+      if (!fbTab) {
+        alert('Please open Facebook in an active tab first.');
+        return;
+      }
+      chrome.tabs.sendMessage(fbTab.id, { action: 'TOGGLE_FLOATING_PANEL' }, (res) => {
+        if (chrome.runtime.lastError) {
+          alert('Could not connect to Facebook tab. Please refresh the Facebook page.');
+        } else {
+          addPopupLog('Toggled on-screen widget on Facebook page.', 'success');
+        }
+      });
+    });
+  }
+
   // Load existing posts from storage
   async function loadExistingPosts() {
     scannedPosts = await StorageManager.getPosts();
@@ -344,15 +392,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  let sessionMetrics = { deleted: 0, failed: 0 };
+
   function updateStatsDisplay() {
     const total = scannedPosts.length;
     const deleteCount = scannedPosts.filter(p => p.recommendation === 'DELETE').length;
     const reviewCount = scannedPosts.filter(p => p.recommendation === 'REVIEW').length;
 
-    statScanned.textContent = total;
-    statDelete.textContent = deleteCount;
-    statReview.textContent = reviewCount;
-    resultsCountBadge.textContent = total;
+    if (statScanned) statScanned.textContent = total;
+    if (statDelete) statDelete.textContent = deleteCount;
+    if (statReview) statReview.textContent = reviewCount;
+    if (statDeletedCount) statDeletedCount.textContent = sessionMetrics.deleted;
+    if (statFailedCount) statFailedCount.textContent = sessionMetrics.failed;
+    if (statRemainingCount) {
+      statRemainingCount.textContent = Math.max(0, total - sessionMetrics.deleted - sessionMetrics.failed);
+    }
+    if (resultsCountBadge) resultsCountBadge.textContent = total;
 
     updateSelectionCount();
   }
@@ -1168,7 +1223,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           deleteStatusDot.className = 'status-dot danger-dot pulse';
           miniStatusDot.className = 'mini-dot danger pulse';
         }
+
+        if (data.results) {
+          sessionMetrics.deleted = data.results.successful || 0;
+          sessionMetrics.failed = data.results.failed || 0;
+          if (statDeletedCount) statDeletedCount.textContent = sessionMetrics.deleted;
+          if (statFailedCount) statFailedCount.textContent = sessionMetrics.failed;
+          if (statRemainingCount) {
+            const tot = data.total || scannedPosts.length;
+            statRemainingCount.textContent = Math.max(0, tot - (data.current || (sessionMetrics.deleted + sessionMetrics.failed)));
+          }
+        }
       }
+    } else if (message.action === 'ACTIVITY_LOG_ENTRY' && message.data) {
+      addPopupLog(message.data.message, message.data.type || 'info');
     }
   });
 
