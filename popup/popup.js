@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnPopupAnalyzeAi = document.getElementById('btnPopupAnalyzeAi');
   const btnPopupDelete = document.getElementById('btnPopupDelete');
   const popupSelCount = document.getElementById('popupSelCount');
+  const cbGiveWarning = document.getElementById('cbGiveWarning');
 
   // Deletion Progress & Controls
   const popupDeleteProgressSection = document.getElementById('popupDeleteProgressSection');
@@ -188,6 +189,50 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load Settings
   settings = await StorageManager.getSettings();
+
+  // Initialize 'Give a warning' toggle state
+  if (cbGiveWarning) {
+    if (typeof settings?.giveWarningOnDelete === 'boolean') {
+      cbGiveWarning.checked = settings.giveWarningOnDelete;
+    }
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['fb_ai_give_warning'], (res) => {
+        if (res && typeof res.fb_ai_give_warning === 'boolean') {
+          cbGiveWarning.checked = res.fb_ai_give_warning;
+        }
+      });
+    }
+
+    cbGiveWarning.addEventListener('change', async () => {
+      const isChecked = cbGiveWarning.checked;
+      if (settings) {
+        settings.giveWarningOnDelete = isChecked;
+        await StorageManager.saveSettings(settings);
+      }
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        await chrome.storage.local.set({ fb_ai_give_warning: isChecked });
+      }
+
+      // Sync directly with active Facebook tab
+      const fbTab = await getFacebookTab();
+      if (fbTab) {
+        chrome.tabs.sendMessage(fbTab.id, {
+          action: 'SET_WARNING_SETTING',
+          giveWarning: isChecked
+        });
+      }
+    });
+
+    // Also listen to storage changes from the floating panel on Facebook tab
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'local' && changes['fb_ai_give_warning']) {
+          cbGiveWarning.checked = Boolean(changes['fb_ai_give_warning'].newValue);
+          if (settings) settings.giveWarningOnDelete = cbGiveWarning.checked;
+        }
+      });
+    }
+  }
 
   // Load existing posts from storage
   async function loadExistingPosts() {
@@ -888,16 +933,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
+    const giveWarning = cbGiveWarning ? cbGiveWarning.checked : Boolean(settings?.giveWarningOnDelete);
+    const deleteOptions = {
+      deleteBatchDelay: settings.deleteBatchDelay,
+      giveWarningOnDelete: giveWarning
+    };
+
     chrome.runtime.sendMessage({
       action: 'BULK_DELETE',
       posts: postsToDelete,
-      options: { deleteBatchDelay: settings.deleteBatchDelay }
+      options: deleteOptions
     }, (res) => {
       if (!res || !res.success) {
         chrome.tabs.sendMessage(fbTab.id, {
           action: 'BULK_DELETE',
           posts: postsToDelete,
-          options: { deleteBatchDelay: settings.deleteBatchDelay }
+          options: deleteOptions
         }, handleBulkDeleteResponse);
       } else {
         handleBulkDeleteResponse(res);

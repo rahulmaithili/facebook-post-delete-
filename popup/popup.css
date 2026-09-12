@@ -759,6 +759,104 @@ body.window-mode {
   padding-top: 10px;
 }
 
+/* Warning Toggle Switch Card */
+.warning-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: var(--radius-md);
+  margin-bottom: 2px;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.warning-toggle-card:hover {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.warning-toggle-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.warning-toggle-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.warning-toggle-texts {
+  display: flex;
+  flex-direction: column;
+}
+
+.warning-toggle-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.warning-toggle-desc {
+  font-size: 9.5px;
+  color: var(--text-secondary);
+}
+
+/* Custom Modern Toggle Switch UI */
+.toggle-switch-ui {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.toggle-switch-ui input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider-ui {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.toggle-slider-ui:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.toggle-switch-ui input:checked + .toggle-slider-ui {
+  background-color: #10b981;
+  border-color: #10b981;
+}
+
+.toggle-switch-ui input:checked + .toggle-slider-ui:before {
+  transform: translateX(16px);
+}
+
 .results-header-bar {
   display: flex;
   justify-content: space-between;

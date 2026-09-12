@@ -1,7 +1,8 @@
 /**
  * FB AI Post Manager - Production Facebook Post Deletion Engine & State Machine
  * Complies with strict anti-accident rules, human-paced state transitions,
- * dynamic DOM heuristics (Profiles, Pages, Groups), and session refresh recovery.
+ * dynamic DOM heuristics (Profiles, Pages, Groups), session refresh recovery,
+ * and user-configurable "Give a warning" toggle automation.
  */
 
 (function () {
@@ -18,6 +19,7 @@
   };
 
   const STORAGE_SESSION_KEY = 'fb_deleter_session';
+  const STORAGE_WARNING_KEY = 'fb_ai_give_warning';
 
   /**
    * Safe Console / Logger Utility
@@ -95,7 +97,6 @@
           if (el.getAttribute('role') === 'toolbar') continue;
 
           const rect = el.getBoundingClientRect();
-          // Real Facebook posts have a minimum height and width
           if (rect.height < 90 || rect.width < 250) continue;
 
           // Generate stable post key
@@ -122,11 +123,9 @@
     generatePostKey(postEl) {
       if (!postEl) return null;
 
-      // 1. Tagged attribute if already tagged
       const existingKey = postEl.getAttribute('data-fb-post-key');
       if (existingKey) return existingKey;
 
-      // 2. Extract from permalink or post ID links
       const link = postEl.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="/reel/"], a[href*="/videos/"]');
       if (link && link.href) {
         const match = link.href.match(/\/(?:posts|permalink|reel|videos)\/([a-zA-Z0-9._-]+)/) ||
@@ -137,7 +136,6 @@
         }
       }
 
-      // 3. Extract from data-ft or DOM attributes
       const dataFt = postEl.getAttribute('data-ft');
       if (dataFt) {
         try {
@@ -146,7 +144,6 @@
         } catch (e) {}
       }
 
-      // 4. Stable content hash fallback: Author + text excerpt
       const authorEl = postEl.querySelector('h2, h3, h4, strong');
       const author = authorEl ? authorEl.textContent.trim().substring(0, 30) : 'member';
       const text = (postEl.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 50);
@@ -170,11 +167,9 @@
     findPostMenu(postEl) {
       if (!postEl) return null;
 
-      // Check 1: Button with explicit aria-haspopup="menu"
       const menuBtn = postEl.querySelector('div[aria-haspopup="menu"][role="button"], div[aria-haspopup="menu"], [aria-haspopup="menu"]');
       if (menuBtn && FBDOM.isElementVisible(menuBtn)) return menuBtn;
 
-      // Check 2: Buttons with action/options aria-labels
       const buttons = Array.from(postEl.querySelectorAll('div[role="button"], button'));
       for (const btn of buttons) {
         if (!FBDOM.isElementVisible(btn)) continue;
@@ -194,7 +189,6 @@
         }
       }
 
-      // Check 3: Top-Right header button containing an SVG
       const postRect = postEl.getBoundingClientRect();
       for (const btn of buttons) {
         if (btn.closest('[role="toolbar"]') || btn.closest('form')) continue;
@@ -219,14 +213,12 @@
         throw new Error('Menu button ("...") not found in post container.');
       }
 
-      // Scroll menu button smoothly into view
       menuBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await new Promise(r => setTimeout(r, TIMEOUTS.INTER_STEP_DELAY));
 
       FBLog.log('OPENING_MENU', 'Clicking post menu button...');
       FBDOM.dispatchFullClick(menuBtn);
 
-      // Wait for menu layer to appear in the DOM
       const startTime = Date.now();
       while (Date.now() - startTime < TIMEOUTS.MENU_OPEN) {
         const menuLayer = document.querySelector('div[role="menu"]');
@@ -270,12 +262,10 @@
         const text = (item.textContent || item.getAttribute('aria-label') || '').trim().toLowerCase();
 
         if (context === 'GROUP') {
-          // In groups, match "remove post" but strictly avoid "ban author"
           if (text.includes('remove post') && !text.includes('ban')) {
             return item;
           }
         } else {
-          // In Profile / Page, match "move to trash" or "delete"
           if (text.includes('trash') || text.includes('bin') || text.includes('delete post') || text === 'delete') {
             return item;
           }
@@ -296,7 +286,6 @@
 
     /**
      * Detect newly appeared visible confirmation dialog
-     * Verifies that this is actually the post deletion confirmation dialog!
      */
     async waitForConfirmationDialog(timeout = TIMEOUTS.DIALOG_DETECT) {
       const startTime = Date.now();
@@ -311,6 +300,7 @@
         'remove',
         'trash',
         'post will be removed',
+        'give a warning',
         'गोपनीयता',
         'सहिष्णु',
         'हटाएं',
@@ -345,18 +335,27 @@
     }
 
     /**
-     * Dynamically inspect dialog for confirmation / rule checkboxes
-     * Handles: <input type="checkbox">, role="checkbox", and aria-checked controls
+     * Dynamically inspect dialog for confirmation / rule checkboxes (Rule 1, Rule 2)
+     * IMPORTANT: Strictly EXCLUDES toggle switches or "Give a warning" controls so they don't get mixed up!
      */
     findConfirmationCheckboxes(dialog) {
       if (!dialog) return [];
 
-      const rawControls = Array.from(dialog.querySelectorAll('div[role="checkbox"], input[type="checkbox"], [role="checkbox"], [aria-checked]'));
+      const rawControls = Array.from(dialog.querySelectorAll('div[role="checkbox"], input[type="checkbox"], [role="checkbox"]'));
       const validCheckboxes = [];
 
       for (const ctrl of rawControls) {
-        // Exclude inputs that are not checkboxes
         if (ctrl.tagName === 'INPUT' && ctrl.type !== 'checkbox') continue;
+
+        // Strictly EXCLUDE role="switch" - switches are for "Give a warning", NOT rule checkboxes!
+        if (ctrl.getAttribute('role') === 'switch' || ctrl.closest('[role="switch"]')) continue;
+
+        // Strictly EXCLUDE controls inside the "Give a warning" row
+        const row = ctrl.closest('div[role="listitem"]') || ctrl.closest('div[style*="flex"]') || ctrl.parentElement?.parentElement || ctrl.parentElement;
+        const rowText = (row?.textContent || ctrl.getAttribute('aria-label') || '').toLowerCase();
+        if (rowText.includes('give a warning') || (rowText.includes('warning') && !rowText.includes('rule') && !rowText.includes('नियम'))) {
+          continue;
+        }
 
         // Verify visibility
         if (FBDOM.isElementVisible(ctrl) || (ctrl.parentElement && FBDOM.isElementVisible(ctrl.parentElement))) {
@@ -368,33 +367,30 @@
     }
 
     /**
-     * Process all required confirmation checkboxes in DOM order (Rule 1, Rule 2, etc.)
+     * Process all required rule checkboxes in DOM order (Rule 1, Rule 2, etc.)
      * Verifies state after clicking. NEVER clicks an already checked checkbox!
      */
     async processCheckboxes(dialog) {
       const checkboxes = this.findConfirmationCheckboxes(dialog);
-      FBLog.log('PROCESSING_CONFIRMATIONS', `Detected ${checkboxes.length} confirmation checkbox control(s).`);
+      FBLog.log('PROCESSING_CONFIRMATIONS', `Detected ${checkboxes.length} rule checkbox control(s).`);
 
       for (let idx = 0; idx < checkboxes.length; idx++) {
         const cb = checkboxes[idx];
         const isChecked = cb.checked === true || cb.getAttribute('aria-checked') === 'true';
 
         if (isChecked) {
-          FBLog.log('PROCESSING_CONFIRMATIONS', `Checkbox #${idx + 1} is already selected. Skipping.`);
+          FBLog.log('PROCESSING_CONFIRMATIONS', `Rule Checkbox #${idx + 1} is already selected. Skipping click.`);
           continue;
         }
 
-        FBLog.log('PROCESSING_CONFIRMATIONS', `Clicking unchecked Checkbox #${idx + 1}...`);
+        FBLog.log('PROCESSING_CONFIRMATIONS', `Clicking unchecked Rule Checkbox #${idx + 1}...`);
         
-        // Scroll checkbox into view
         cb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         await new Promise(r => setTimeout(r, 200));
 
-        // Click target: label or wrapper button if available, else checkbox itself
         const clickTarget = cb.closest('label') || cb.closest('[role="button"]') || cb;
         FBDOM.dispatchFullClick(clickTarget);
 
-        // Wait for state change to be registered in DOM / React
         const stateStart = Date.now();
         let stateChanged = false;
 
@@ -407,15 +403,108 @@
         }
 
         if (!stateChanged) {
-          // Retry direct click on the checkbox element itself
           FBDOM.dispatchFullClick(cb);
           await new Promise(r => setTimeout(r, 300));
         }
 
-        FBLog.log('PROCESSING_CONFIRMATIONS', `Checkbox #${idx + 1} verified selected.`);
+        FBLog.log('PROCESSING_CONFIRMATIONS', `Rule Checkbox #${idx + 1} verified selected.`);
         await new Promise(r => setTimeout(r, TIMEOUTS.INTER_STEP_DELAY));
       }
 
+      return true;
+    }
+
+    /**
+     * Handle "Give a warning" toggle switch according to user configuration
+     * If shouldGiveWarning is TRUE: Ensure toggle switch is turned ON.
+     * If shouldGiveWarning is FALSE: Ensure toggle switch is turned OFF.
+     */
+    async processWarningToggle(dialog, shouldGiveWarning = false) {
+      if (!dialog) return false;
+
+      // Locate the "Give a warning" toggle switch
+      let warningSwitch = null;
+
+      // 1. Look for switch elements inside the dialog
+      const switches = Array.from(dialog.querySelectorAll('div[role="switch"], [role="switch"]'));
+      for (const sw of switches) {
+        const row = sw.closest('div[role="listitem"]') || sw.closest('div[style*="flex"]') || sw.parentElement?.parentElement || sw.parentElement;
+        const rowText = (row?.textContent || sw.getAttribute('aria-label') || '').toLowerCase();
+        if (rowText.includes('warning') || rowText.includes('चेतावनी') || rowText.includes('give a warning')) {
+          warningSwitch = sw;
+          break;
+        }
+      }
+
+      // Fallback 1: If only one switch exists in dialog and text mentions warning
+      if (!warningSwitch && switches.length === 1) {
+        const dialogText = (dialog.textContent || '').toLowerCase();
+        if (dialogText.includes('give a warning') || dialogText.includes('warning in the past')) {
+          warningSwitch = switches[0];
+        }
+      }
+
+      // Fallback 2: Check for input[type="checkbox"] near text "warning"
+      if (!warningSwitch) {
+        const allCheckboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], div[role="checkbox"]'));
+        for (const cb of allCheckboxes) {
+          const row = cb.closest('div[role="listitem"]') || cb.closest('div[style*="flex"]') || cb.parentElement?.parentElement || cb.parentElement;
+          const rowText = (row?.textContent || cb.getAttribute('aria-label') || '').toLowerCase();
+          if (rowText.includes('give a warning') || (rowText.includes('warning') && !rowText.includes('rule') && !rowText.includes('नियम'))) {
+            warningSwitch = cb;
+            break;
+          }
+        }
+      }
+
+      if (!warningSwitch) {
+        FBLog.log('PROCESS_WARNING', 'No "Give a warning" toggle switch present in this dialog.');
+        return false;
+      }
+
+      const isCurrentlyOn = warningSwitch.getAttribute('aria-checked') === 'true' ||
+                            warningSwitch.checked === true ||
+                            warningSwitch.getAttribute('data-state') === 'checked';
+
+      FBLog.log('PROCESS_WARNING', `Found "Give a warning" switch. Currently: ${isCurrentlyOn ? 'ON' : 'OFF'}, Target: ${shouldGiveWarning ? 'ON' : 'OFF'}`);
+
+      if (shouldGiveWarning) {
+        // User wants Warning ENABLED
+        if (!isCurrentlyOn) {
+          FBLog.log('PROCESS_WARNING', 'Turning ON "Give a warning" switch...');
+          const clickTarget = warningSwitch.closest('label') || warningSwitch.closest('[role="button"]') || warningSwitch;
+          FBDOM.dispatchFullClick(clickTarget);
+
+          const start = Date.now();
+          while (Date.now() - start < 1500) {
+            const nowOn = warningSwitch.getAttribute('aria-checked') === 'true' || warningSwitch.checked === true;
+            if (nowOn) break;
+            await new Promise(r => setTimeout(r, 100));
+          }
+          FBLog.log('PROCESS_WARNING', 'Verified: "Give a warning" is now ON.');
+        } else {
+          FBLog.log('PROCESS_WARNING', '"Give a warning" is already ON. No click needed.');
+        }
+      } else {
+        // User wants Warning DISABLED
+        if (isCurrentlyOn) {
+          FBLog.log('PROCESS_WARNING', 'Turning OFF "Give a warning" switch...');
+          const clickTarget = warningSwitch.closest('label') || warningSwitch.closest('[role="button"]') || warningSwitch;
+          FBDOM.dispatchFullClick(clickTarget);
+
+          const start = Date.now();
+          while (Date.now() - start < 1500) {
+            const nowOn = warningSwitch.getAttribute('aria-checked') === 'true' || warningSwitch.checked === true;
+            if (!nowOn) break;
+            await new Promise(r => setTimeout(r, 100));
+          }
+          FBLog.log('PROCESS_WARNING', 'Verified: "Give a warning" is now OFF.');
+        } else {
+          FBLog.log('PROCESS_WARNING', '"Give a warning" is already OFF. No click needed.');
+        }
+      }
+
+      await new Promise(r => setTimeout(r, TIMEOUTS.INTER_STEP_DELAY));
       return true;
     }
 
@@ -439,13 +528,11 @@
 
           const text = (btn.textContent || btn.getAttribute('aria-label') || '').trim().toLowerCase();
 
-          // Exclude cancel / close buttons
           if (cancelLabels.some(c => text.includes(c))) continue;
 
           const isMatch = confirmLabels.some(l => text === l || text.includes(l));
           if (!isMatch) continue;
 
-          // Check whether button is enabled
           const isDisabled = btn.disabled ||
                              btn.getAttribute('aria-disabled') === 'true' ||
                              btn.classList.contains('disabled');
@@ -459,7 +546,6 @@
         await new Promise(r => setTimeout(r, 200));
       }
 
-      // Fallback: check FBDOM modal confirm selectors
       const fallbackBtn = FBDOM.findFirst(FBDOM.selectors.modalConfirmButtons, dialog);
       if (fallbackBtn && FBDOM.isElementVisible(fallbackBtn)) {
         return fallbackBtn;
@@ -475,17 +561,13 @@
       const startTime = Date.now();
 
       while (Date.now() - startTime < timeout) {
-        // 1. Dialog disappeared
         const dialogGone = !dialog || !document.body.contains(dialog) || !FBDOM.isElementVisible(dialog);
-
-        // 2. Post element removed or hidden
         const postGone = !postEl || !document.body.contains(postEl) || !FBDOM.isElementVisible(postEl);
 
         if (dialogGone && (postGone || Date.now() - startTime > 1500)) {
           return { verified: true, reason: 'Dialog closed and post removed from DOM.' };
         }
 
-        // Check for Facebook error / restriction message
         const errorAlert = document.querySelector('div[role="alert"]');
         if (errorAlert && FBDOM.isElementVisible(errorAlert)) {
           const errText = errorAlert.textContent || '';
@@ -497,7 +579,6 @@
         await new Promise(r => setTimeout(r, 200));
       }
 
-      // Final check: Is dialog still open?
       if (dialog && document.body.contains(dialog) && FBDOM.isElementVisible(dialog)) {
         return { verified: false, reason: 'Confirmation dialog remained open (timeout).' };
       }
@@ -520,23 +601,33 @@
       this.session = null;
       this.onProgressCallback = null;
 
+      // User setting: Give warning on deletion (default: false / disabled)
+      this.giveWarningOnDelete = false;
+
       // Floating panel reference
       this.panelEl = null;
 
-      // Check for saved session recovery on startup
+      // Check for saved session recovery & settings on startup
       this.initRecoveryCheck();
     }
 
     /**
-     * Checks storage for interrupted sessions across page refreshes
+     * Checks storage for interrupted sessions across page refreshes and loads user settings
      */
     async initRecoveryCheck() {
       if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
 
       try {
-        const stored = await chrome.storage.local.get([STORAGE_SESSION_KEY]);
-        const saved = stored[STORAGE_SESSION_KEY];
+        const stored = await chrome.storage.local.get([STORAGE_SESSION_KEY, STORAGE_WARNING_KEY]);
+        
+        // Load Give Warning setting
+        if (typeof stored[STORAGE_WARNING_KEY] === 'boolean') {
+          this.giveWarningOnDelete = stored[STORAGE_WARNING_KEY];
+          FBLog.log('SETTING', `Loaded saved Give Warning setting: ${this.giveWarningOnDelete}`);
+        }
 
+        // Check for active session recovery
+        const saved = stored[STORAGE_SESSION_KEY];
         if (saved && saved.running && (saved.deletedCount > 0 || saved.processedCount > 0)) {
           FBLog.log('STARTUP_RECOVERY', 'Detected previous active deletion session.', saved);
           this.session = saved;
@@ -547,6 +638,37 @@
         }
       } catch (err) {
         FBLog.warn('STARTUP_RECOVERY', 'Failed reading storage session.', err);
+      }
+    }
+
+    /**
+     * Updates the giveWarningOnDelete setting and syncs to UI
+     */
+    setGiveWarning(val) {
+      this.giveWarningOnDelete = Boolean(val);
+      FBLog.log('SETTING', `Give warning on delete set to: ${this.giveWarningOnDelete}`);
+
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ [STORAGE_WARNING_KEY]: this.giveWarningOnDelete });
+      }
+
+      this.syncWarningUI();
+    }
+
+    syncWarningUI() {
+      const warningCb = document.getElementById('fb-panel-warning-checkbox');
+      const warningStatusText = document.getElementById('fb-panel-warning-status-text');
+      const warningSlider = document.getElementById('fb-panel-warning-slider');
+      const warningKnob = document.getElementById('fb-panel-warning-knob');
+
+      if (warningCb) warningCb.checked = this.giveWarningOnDelete;
+      if (warningStatusText) {
+        warningStatusText.textContent = this.giveWarningOnDelete ? 'ENABLED' : 'DISABLED';
+        warningStatusText.style.color = this.giveWarningOnDelete ? '#10b981' : '#94a3b8';
+      }
+      if (warningSlider && warningKnob) {
+        warningSlider.style.backgroundColor = this.giveWarningOnDelete ? '#10b981' : 'rgba(255,255,255,0.2)';
+        warningKnob.style.left = this.giveWarningOnDelete ? '19px' : '3px';
       }
     }
 
@@ -595,7 +717,6 @@
       this.state = 'SCANNING';
       this.renderFloatingPanel();
 
-      // Trigger auto-scan & continue deletion loop
       const posts = this.adapter.findPostContainers().map(c => ({ id: c.postKey, text: '' }));
       await this.bulkDeletePosts(posts, { autoDiscovered: true });
     }
@@ -685,6 +806,10 @@
       this.state = 'STARTED';
       this.onProgressCallback = onProgress;
 
+      if (options && typeof options.giveWarningOnDelete === 'boolean') {
+        this.giveWarningOnDelete = options.giveWarningOnDelete;
+      }
+
       const results = {
         total: postsToDelete.length || 0,
         processed: 0,
@@ -705,12 +830,9 @@
       this.updateFloatingPanelUI('Initializing deletion engine...');
 
       let postQueue = [...postsToDelete];
-
-      // Main Deletion State Machine Loop
       let currentIndex = 0;
 
       while (this.isDeleting && (currentIndex < postQueue.length || options.autoDiscovered)) {
-        // 1. Handle Pause State
         while (this.isPaused) {
           if (!this.isDeleting) break;
           this.updateFloatingPanelUI('⏸️ Deletion Paused');
@@ -719,16 +841,13 @@
 
         if (!this.isDeleting) break;
 
-        // 2. Discover post to delete
         let targetPost = postQueue[currentIndex];
         let postContainerEl = null;
 
-        // If auto-discovering or post not located, dynamically scan currently visible feed
         const visibleContainers = this.adapter.findPostContainers();
         const available = visibleContainers.filter(c => !c.isProcessed);
 
         if (available.length > 0) {
-          // Pick next unprocessed post
           const nextContainer = available[0];
           postContainerEl = nextContainer.element;
           targetPost = {
@@ -741,7 +860,6 @@
         }
 
         if (!postContainerEl) {
-          // Scroll slightly to discover more posts
           FBLog.log('SCANNING', 'No unprocessed post visible in viewport. Scrolling down...');
           this.updateFloatingPanelUI('Scrolling to load more posts...');
           window.scrollBy({ top: 450, behavior: 'smooth' });
@@ -762,9 +880,8 @@
         this.updateFloatingPanelUI(`Processing post ${results.processed} of ${results.total || '...'}`);
         this.emitProgress(results.processed, results.total, results, `Processing post ${results.processed}...`);
 
-        // 3. Execute Single Post Deletion via State Machine
         try {
-          const outcome = await this.deleteSinglePostVerified(targetPost, postContainerEl);
+          const outcome = await this.deleteSinglePostVerified(targetPost, postContainerEl, options);
 
           if (outcome.status === 'SUCCESS') {
             results.successful++;
@@ -783,7 +900,6 @@
           results.details.push({ id: postKey, status: 'FAILED', message: err.message });
           FBLog.error('DELETE_STEP', `Error on post ${postKey}: ${err.message}`);
 
-          // Close any open dangling menus/dialogs safely
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
         }
 
@@ -796,7 +912,6 @@
 
         currentIndex++;
 
-        // Controlled human-like pacing between deletions
         if (this.isDeleting) {
           const delay = options.deleteBatchDelay || 2000;
           await new Promise(r => setTimeout(r, delay));
@@ -816,13 +931,11 @@
     /**
      * Delete a single post through the strict verification state machine
      */
-    async deleteSinglePostVerified(post, postElement = null) {
-      // Step 1: Ensure valid domain
+    async deleteSinglePostVerified(post, postElement = null, options = {}) {
       if (!window.location.hostname.includes('facebook.com')) {
         return { status: 'SKIPPED', reason: 'Not on facebook.com domain.' };
       }
 
-      // Step 2: Ensure post container is alive in DOM
       const targetElement = postElement || document.querySelector(`[data-fb-post-key="${post.id}"]`);
       if (!targetElement) {
         return { status: 'SKIPPED', reason: 'Post container not found in current DOM.' };
@@ -831,7 +944,6 @@
       const postKey = post.id || post.postKey;
       FBLog.log('POST_FOUND', `Targeting post: ${postKey}`);
 
-      // Step 3: Find and open post menu ("...")
       let menuLayer = null;
       try {
         menuLayer = await this.adapter.openPostMenu(targetElement);
@@ -839,10 +951,8 @@
         return { status: 'FAILED', reason: `Menu open failed: ${err.message}` };
       }
 
-      // Step 4: Find Remove/Delete action in open menu
       const removeAction = this.adapter.findRemoveAction(menuLayer);
       if (!removeAction) {
-        // Safely close menu
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
         return { status: 'SKIPPED', reason: 'No Remove/Delete option found in menu.' };
       }
@@ -850,7 +960,7 @@
       FBLog.log('REMOVE_OPTION_FOUND', `Clicking removal action: "${(removeAction.textContent || '').trim()}"`);
       FBDOM.dispatchFullClick(removeAction);
 
-      // Step 5: Wait for confirmation dialog (DYNAMIC MODAL DETECTION)
+      // Wait for confirmation dialog (DYNAMIC MODAL DETECTION)
       this.state = 'WAITING_CONFIRMATION';
       const dialog = await this.adapter.waitForConfirmationDialog(TIMEOUTS.DIALOG_DETECT);
 
@@ -858,6 +968,13 @@
         // Step 6: Process Confirmation & Rule Checkboxes (Rule 1, Rule 2, etc.)
         this.state = 'PROCESSING_CONFIRMATIONS';
         await this.adapter.processCheckboxes(dialog);
+
+        // Step 6.5: Process "Give a warning" toggle switch according to user configuration!
+        const shouldGiveWarning = (options && typeof options.giveWarningOnDelete === 'boolean')
+          ? options.giveWarningOnDelete
+          : this.giveWarningOnDelete;
+        
+        await this.adapter.processWarningToggle(dialog, shouldGiveWarning);
 
         // Step 7: Locate enabled final confirmation button
         this.state = 'FINAL_DELETE';
@@ -878,7 +995,6 @@
           return { status: 'FAILED', reason: verifyResult.reason };
         }
       } else {
-        // If no modal appeared, check if deletion was immediate or moved to trash
         FBLog.warn('WAITING_CONFIRMATION', 'No confirmation modal displayed. Verifying if immediate deletion occurred.');
         await new Promise(r => setTimeout(r, 1200));
       }
@@ -890,6 +1006,7 @@
     /**
      * =========================================================================
      * 3. Draggable, Minimizable Floating Control Panel on Facebook DOM
+     * Includes real-time "Give a warning" toggle switch directly on screen!
      * =========================================================================
      */
     ensureFloatingPanel() {
@@ -907,7 +1024,7 @@
         position: fixed !important;
         bottom: 24px !important;
         right: 24px !important;
-        width: 320px !important;
+        width: 330px !important;
         background: #18191a !important;
         color: #ffffff !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
@@ -962,6 +1079,23 @@
             </div>
           </div>
 
+          <!-- User-Requested: Give Warning on Delete Toggle Switch Row -->
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 12px;">⚠️</span>
+              <div>
+                <div style="font-size: 11px; font-weight: 600; color: #fff;">Give Warning: <span id="fb-panel-warning-status-text" style="color: ${this.giveWarningOnDelete ? '#10b981' : '#94a3b8'};">${this.giveWarningOnDelete ? 'ENABLED' : 'DISABLED'}</span></div>
+                <div style="font-size: 9px; color: #94a3b8;">Facebook modal warning toggle</div>
+              </div>
+            </div>
+            <label style="position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; margin: 0;">
+              <input type="checkbox" id="fb-panel-warning-checkbox" ${this.giveWarningOnDelete ? 'checked' : ''} style="opacity: 0; width: 0; height: 0;">
+              <span id="fb-panel-warning-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: ${this.giveWarningOnDelete ? '#10b981' : 'rgba(255,255,255,0.2)'}; border-radius: 20px; transition: .25s;">
+                <span id="fb-panel-warning-knob" style="position: absolute; height: 14px; width: 14px; left: ${this.giveWarningOnDelete ? '19px' : '3px'}; bottom: 3px; background-color: white; border-radius: 50%; transition: .25s;"></span>
+              </span>
+            </label>
+          </div>
+
           <!-- Controls -->
           <div style="display: flex; gap: 8px; margin-top: 2px;">
             <button id="btnPanelPause" style="flex: 1; background: #f59e0b; color: #000; font-weight: 700; font-size: 11px; padding: 6px; border: none; border-radius: 6px; cursor: pointer;">
@@ -989,10 +1123,8 @@
       document.body.appendChild(panel);
       this.panelEl = panel;
 
-      // Make Panel Draggable
       this.setupDraggable(panel, panel.querySelector('#fb-deleter-header'));
 
-      // Event Listeners
       const btnPause = panel.querySelector('#btnPanelPause');
       const btnResume = panel.querySelector('#btnPanelResume');
       const btnStop = panel.querySelector('#btnPanelStop');
@@ -1001,6 +1133,18 @@
       const minPill = panel.querySelector('#fb-deleter-minimized-pill');
       const body = panel.querySelector('#fb-deleter-body');
       const header = panel.querySelector('#fb-deleter-header');
+
+      // Warning switch event listener
+      const warningCb = panel.querySelector('#fb-panel-warning-checkbox');
+      const warningStatusText = panel.querySelector('#fb-panel-warning-status-text');
+      const warningSlider = panel.querySelector('#fb-panel-warning-slider');
+      const warningKnob = panel.querySelector('#fb-panel-warning-knob');
+
+      if (warningCb) {
+        warningCb.onchange = (e) => {
+          this.setGiveWarning(e.target.checked);
+        };
+      }
 
       btnPause.onclick = () => {
         this.pause();
@@ -1029,7 +1173,7 @@
         minPill.style.display = 'none';
         header.style.display = 'flex';
         body.style.display = 'flex';
-        panel.style.width = '320px';
+        panel.style.width = '330px';
       };
 
       btnDiag.onclick = () => {
@@ -1037,16 +1181,13 @@
       };
     }
 
-    /**
-     * Setup drag handling for floating panel
-     */
     setupDraggable(panel, handle) {
       let isDragging = false;
       let startX = 0, startY = 0;
       let initRight = 24, initBottom = 24;
 
       handle.onmousedown = (e) => {
-        if (e.target.tagName === 'BUTTON') return;
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('label')) return;
         isDragging = true;
         startX = e.clientX;
         startY = e.clientY;
@@ -1103,6 +1244,8 @@
       if (dotEl) dotEl.style.background = color;
       if (minDot) minDot.style.background = color;
       if (minText) minText.textContent = `FB Deleter | ${this.isPaused ? 'Paused' : 'Running'} | ${current}/${total}`;
+
+      this.syncWarningUI();
     }
 
     destroyFloatingPanel() {
@@ -1112,9 +1255,6 @@
       }
     }
 
-    /**
-     * Developer Diagnostic: Safely analyze current open dialog
-     */
     analyzeCurrentDialog() {
       const dialog = document.querySelector('div[role="dialog"]');
       if (!dialog) {
@@ -1176,6 +1316,9 @@
       } else if (request.action === 'STOP_DELETE' || request.action === 'STOP_AUTOMATION') {
         fbActionsInstance.stop();
         sendResponse({ success: true });
+      } else if (request.action === 'SET_WARNING_SETTING') {
+        fbActionsInstance.setGiveWarning(request.giveWarning);
+        sendResponse({ success: true, giveWarning: fbActionsInstance.giveWarningOnDelete });
       } else if (request.action === 'ANALYZE_CURRENT_DIALOG') {
         const diag = fbActionsInstance.analyzeCurrentDialog();
         sendResponse({ success: true, diagnostic: diag });
@@ -1185,6 +1328,7 @@
           isDeleting: fbActionsInstance.isDeleting,
           isPaused: fbActionsInstance.isPaused,
           state: fbActionsInstance.state,
+          giveWarningOnDelete: fbActionsInstance.giveWarningOnDelete,
           session: fbActionsInstance.session
         });
       }

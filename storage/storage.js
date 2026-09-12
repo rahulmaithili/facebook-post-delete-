@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = {
   autoSelectAiDelete: false, // Default: OFF as required by safety specifications
   darkMode: true,
   confirmBeforeDelete: true, // Permanent safety requirement
+  giveWarningOnDelete: false, // User toggle: Enable/Disable 'Give a warning' in Facebook modal
   rules: {
     minQuality: 40,
     minEngagement: 15,
@@ -29,7 +30,8 @@ const STORAGE_KEYS = {
   CURRENT_SCAN: 'fb_ai_scan_info',
   RECENT_GROUPS: 'fb_ai_recent_groups',
   TRAINED_SELECTORS: 'fb_ai_trained_selectors',
-  SESSION: 'fb_deleter_session'
+  SESSION: 'fb_deleter_session',
+  GIVE_WARNING: 'fb_ai_give_warning'
 };
 
 const _memoryStore = new Map();
